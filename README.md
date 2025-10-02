@@ -1,4 +1,4 @@
-# Brain Compensation Analyses
+# Autism Genetics and Brain Connectivity Analysis
 
 ## Project Goals
 This repository collects the code used to test how brain connectivity patterns may relate to differences in genetic predisposition to autism and to social difficulties. The workflow links Human Connectome Project (HCP) behavioural measures, polygenic scores (PGS) derived from external autism GWAS, and resting-state fMRI connectomes. The analyses proceed in three blocks:
