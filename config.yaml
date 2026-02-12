@@ -1,0 +1,28 @@
+# Configuration file for Brain Compensation Snakemake workflow
+
+# Project directories
+project_dir: "/Users/joebathelt/Documents/1_Projects/BrainCompensation"
+
+# Input data files (relative to data directory)
+# Adjust these to match your actual input file names
+input_behavioural: "raw_anonymised/behavioural_data_anonymised.csv"
+input_phenotypic: "raw_anonymised/phenotypic_data_anonymised.csv"
+input_movement: "raw_anonymised/movement_data_anonymised.csv"
+input_subject_ids: "raw_anonymised/subject_ids_anonymised.txt"
+genetic_data_prefix: "genetic_data"
+matrices_dir: "HCP_PTN1200/netmats"
+
+# External tools
+gcta_path: "/opt/gcta"
+
+# Computational resources
+threads: 8        # Number of threads for parallel processing
+mem_mb: 16000     # Memory in MB for large jobs
+
+# Analysis parameters
+motion_threshold: 0.2
+parcellations: "50 100 200"
+n_components: 10          # Number of PLS components
+n_bootstrap: 1000         # Number of bootstrap iterations for PLS
+n_iterations: 50          # Number of consensus clustering iterations for C3
+target_communities: "5 15"  # Target community count range (min max) for C3

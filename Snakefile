@@ -1,0 +1,572 @@
+"""
+Snakemake workflow for Brain Compensation project
+Analysis pipeline for integrating phenotypic, genetic (PRS), and fMRI data
+"""
+
+configfile: "config.yaml"
+
+# Define project paths
+PROJECT_DIR = config["project_dir"]
+DATA_DIR = f"{PROJECT_DIR}/data"
+CODE_DIR = f"{PROJECT_DIR}/code"
+GENETICS_INPUT_DIR = f"{DATA_DIR}/raw_anonymised"  # Original genetics data (read-only)
+PLINK_DIR = f"{DATA_DIR}/PLINK_anonymised"        # PLINK working directory (outputs)
+QCDIR = f"{DATA_DIR}/plinkQC_output"              # B1 plinkQC output directory
+RESULTS_DIR = f"{PROJECT_DIR}/results"
+LOGS_DIR = f"{PROJECT_DIR}/logs"
+GCTA_PATH = config.get("gcta_path", "/opt/gcta")
+
+# Final target outputs
+rule all:
+    input:
+        # Phase A: Phenotypic data preprocessing
+        f"{RESULTS_DIR}/behavioural_data_preprocessed.csv",
+        f"{PROJECT_DIR}/reports/A1_preprocess_phenotypic_data_report.txt",
+        f"{PROJECT_DIR}/figures/A1_Behaviour_correlations.png",
+        f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        f"{PROJECT_DIR}/reports/A2_factor_analysis_report.txt",
+        f"{PROJECT_DIR}/figures/A2_factor_loadings.png",
+        f"{PROJECT_DIR}/figures/A2_factor_scores_distribution.png",
+        f"{PROJECT_DIR}/figures/A3_social_factor_evaluation.png",
+        f"{PROJECT_DIR}/reports/A3_evaluate_social_factor_report.txt",
+
+        # Phase B: Genetic/PRS analysis
+        f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
+        f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt",
+        f"{PLINK_DIR}/full_prs_scores.snp.blp.profile",
+        f"{PROJECT_DIR}/figures/B3_prs_threshold_evaluation.png",
+        f"{PROJECT_DIR}/figures/B5_blup_evaluation.png",
+        f"{RESULTS_DIR}/prs_residuals.csv",
+
+        # Phase C: fMRI analysis
+        f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt",
+        f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
+        f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
+        f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
+        f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
+        f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
+        f"{RESULTS_DIR}/C3b_heteroscedasticity_results.csv",
+        f"{RESULTS_DIR}/C4_sensitivity_summary.csv",
+        f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
+        f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png",
+
+        # Data quality check
+        f"{RESULTS_DIR}/DataRetention_Overview.csv",
+
+        # Publication figures
+        f"{PROJECT_DIR}/figures/publication/fig_pgs_social_scatter.svg"
+
+
+# ============================================================================
+# Phase A: Phenotypic Data Preprocessing
+# ============================================================================
+
+rule preprocess_phenotypic:
+    """Preprocess HCP behavioural and phenotypic data"""
+    input:
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
+    output:
+        data=f"{RESULTS_DIR}/behavioural_data_preprocessed.csv",
+        report=f"{PROJECT_DIR}/reports/A1_preprocess_phenotypic_data_report.txt",
+        figure=f"{PROJECT_DIR}/figures/A1_Behaviour_correlations.png"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/A1_preprocess_phenotypic.log"
+    shell:
+        """
+        python {CODE_DIR}/A1_preprocess_phenotypic_data.py \
+            --behavioural {input.behavioural} \
+            --phenotypic {input.phenotypic} \
+            --output {output.data} \
+            --project {PROJECT_DIR} \
+            --figure {output.figure} > {log} 2>&1
+        """
+
+
+rule factor_analysis:
+    """Perform confirmatory factor analysis on behavioural data"""
+    input:
+        f"{RESULTS_DIR}/behavioural_data_preprocessed.csv"
+    output:
+        data=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        report=f"{PROJECT_DIR}/reports/A2_factor_analysis_report.txt",
+        fig1=f"{PROJECT_DIR}/figures/A2_factor_loadings.png",
+        fig2=f"{PROJECT_DIR}/figures/A2_factor_scores_distribution.png"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/A2_factor_analysis.log"
+    shell:
+        """
+        Rscript {CODE_DIR}/A2_factor_analysis.R \
+            --input {input} \
+            --output {output.data} \
+            --project {PROJECT_DIR} > {log} 2>&1
+        """
+
+
+rule evaluate_social_factor:
+    """Evaluate social factor from CFA results"""
+    input:
+        factor=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}"
+    output:
+        fig=f"{PROJECT_DIR}/figures/A3_social_factor_evaluation.png",
+        report=f"{PROJECT_DIR}/reports/A3_evaluate_social_factor_report.txt"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/A3_evaluate_social_factor.log"
+    shell:
+        """
+        python {CODE_DIR}/A3_evaluate_social_factor.py \
+            --factor {input.factor} \
+            --behavioural {input.behavioural} \
+            --output {output.fig} \
+            --project {PROJECT_DIR} > {log} 2>&1
+        """
+
+
+# ============================================================================
+# Phase B: Genetic/PRS Analysis
+# ============================================================================
+
+rule plinkqc_genotype_qc:
+    """Genotype quality control using plinkQC (B1)"""
+    input:
+        bfile=f"{GENETICS_INPUT_DIR}/Neuro_Chip_anonymised.bed"
+    output:
+        clean_bed=f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
+        report=f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt"
+    log:
+        f"{LOGS_DIR}/B1_plinkqc_genotype_qc.log"
+    shell:
+        """
+        Rscript {CODE_DIR}/B1_plinkQC_genotype_qc.R \
+            --project {PROJECT_DIR} > {log} 2>&1
+        """
+
+
+rule translate_prs_to_hcp:
+    """SNP harmonization, PCA, relatedness filtering, and PRS calculation (B2)"""
+    input:
+        clean_bed=f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
+        gwas=f"{GENETICS_INPUT_DIR}/iPSYCH_PGC_ASD_Nov_2017.gz",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
+    output:
+        prs_scores=f"{PLINK_DIR}/hcp_prs_scores.profile",
+        pca=f"{PLINK_DIR}/Neuro_Chip_full_sample_pca.eigenvec",
+        qc_bed=f"{PLINK_DIR}/Neuro_Chip_qc_nodup_sexfiltered.bed",
+        unrelated_prs=f"{PLINK_DIR}/unrelated_prs_scores.txt"
+    log:
+        f"{LOGS_DIR}/B2_translate_prs.log"
+    shell:
+        """
+        bash {CODE_DIR}/B2_translate_PRS_to_HCP.sh \
+            --original-data {GENETICS_INPUT_DIR} \
+            --plink-dir {PLINK_DIR} \
+            --data-dir {DATA_DIR} \
+            --code-dir {CODE_DIR} \
+            --phenotypic {input.phenotypic} \
+            --qcdir {QCDIR} \
+            --output {output.prs_scores} > {log} 2>&1
+        """
+
+
+rule select_prs_threshold:
+    """Select optimal PRS threshold based on prediction performance"""
+    input:
+        prs=f"{PLINK_DIR}/hcp_prs_scores.profile",
+        phenotype=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        pca=f"{PLINK_DIR}/Neuro_Chip_full_sample_pca.eigenvec"
+    output:
+        plot=f"{PROJECT_DIR}/figures/B3_prs_threshold_evaluation.png",
+        selected=f"{RESULTS_DIR}/prs_selected_threshold.txt"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/B3_select_prs_threshold.log"
+    shell:
+        """
+        python {CODE_DIR}/B3_select_PRS_threshold.py \
+            --prs {input.prs} \
+            --phenotype {input.phenotype} \
+            --pca {input.pca} \
+            --output-plot {output.plot} \
+            --output-threshold {output.selected} \
+            --project {PROJECT_DIR} > {log} 2>&1
+        """
+
+
+rule extend_prs_with_blup:
+    """Extend PRS with BLUP predictions"""
+    input:
+        prs=f"{PLINK_DIR}/hcp_prs_scores.profile",
+        threshold=f"{RESULTS_DIR}/prs_selected_threshold.txt",
+        bfile=f"{PLINK_DIR}/Neuro_Chip_qc_nodup_sexfiltered.bed"
+    output:
+        f"{PLINK_DIR}/full_prs_scores.snp.blp.profile"
+    log:
+        f"{LOGS_DIR}/B4_extend_prs_blup.log"
+    shell:
+        """
+        bash {CODE_DIR}/B4_extend_PRS_with_BLUP.sh \
+            --plink-dir {PLINK_DIR} \
+            --prs-file {input.prs} \
+            --threshold-file {input.threshold} \
+            --gcta-path {GCTA_PATH} \
+            --output {output} > {log} 2>&1
+        """
+
+
+rule evaluate_blup:
+    """Evaluate BLUP prediction accuracy"""
+    input:
+        blup_prs=f"{PLINK_DIR}/full_prs_scores.snp.blp.profile",
+        original_prs=f"{PLINK_DIR}/unrelated_prs_scores.txt",
+        social_scores=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        pca=f"{PLINK_DIR}/Neuro_Chip_full_sample_pca.eigenvec"
+    output:
+        plot=f"{PROJECT_DIR}/figures/B5_blup_evaluation.png",
+        residuals=f"{RESULTS_DIR}/prs_residuals.csv"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/B5_evaluate_blup.log"
+    shell:
+        """
+        python {CODE_DIR}/B5_evalute_BLUP_prediction.py \
+            --blup-prs {input.blup_prs} \
+            --original-prs {input.original_prs} \
+            --social-scores {input.social_scores} \
+            --phenotypic {input.phenotypic} \
+            --behavioural {input.behavioural} \
+            --pca {input.pca} \
+            --output-residuals {output.residuals} \
+            --output-plot {output.plot} \
+            --project {PROJECT_DIR} > {log} 2>&1
+        """
+
+
+# ============================================================================
+# Phase C: fMRI Analysis
+# ============================================================================
+
+rule univariate_fmri_prediction:
+    """Run univariate fMRI prediction analysis"""
+    input:
+        prs=f"{RESULTS_DIR}/prs_residuals.csv",
+        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
+        movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt"
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        motion_threshold=config.get("motion_threshold", 0.2),
+        parcellations=config.get("parcellations", "50 100 200")
+    conda:
+        "environment.yml"
+    threads: config.get("threads", 4)
+    resources:
+        mem_mb=config.get("mem_mb", 8000)
+    log:
+        f"{LOGS_DIR}/C1_univariate_fmri.log"
+    shell:
+        """
+        python {CODE_DIR}/C1_run_univariate_fMRI_prediction.py \
+            --project {PROJECT_DIR} \
+            --social {input.social} \
+            --pgs {input.prs} \
+            --behavioural {input.behavioural} \
+            --phenotypic {input.phenotypic} \
+            --movement {input.movement} \
+            --ids {input.ids} \
+            --matrices-dir {params.matrices_dir} \
+            --motion-threshold {params.motion_threshold} \
+            --parcellations {params.parcellations} > {log} 2>&1
+        """
+
+
+rule find_fmri_communities:
+    """Identify network communities in fMRI data"""
+    input:
+        report=f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt",
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
+        partition_50=f"{RESULTS_DIR}/C2_final_partition_50Nodes.csv",
+        partition_100=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
+        partition_200=f"{RESULTS_DIR}/C2_final_partition_200Nodes.csv"
+    params:
+        parcellations=config.get("parcellations", "50 100 200"),
+        n_iterations=config.get("n_iterations", 50),
+        target_communities=config.get("target_communities", "5 15")
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/C2_find_communities.log"
+    shell:
+        """
+        python {CODE_DIR}/C2_find_communities_fMRI.py \
+            --project {PROJECT_DIR} \
+            --matrices-dir {input.matrices_dir} \
+            --ids {input.ids} \
+            --parcellations {params.parcellations} \
+            --n-iterations {params.n_iterations} \
+            --target-communities {params.target_communities} > {log} 2>&1
+        """
+
+
+rule main_landscape_analysis:
+    """Perform main landscape analysis with sensitivity analyses"""
+    input:
+        prs=f"{RESULTS_DIR}/prs_residuals.csv",
+        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
+        movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
+        partition=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv"
+    output:
+        report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
+        results=f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
+        summary=f"{RESULTS_DIR}/C4_sensitivity_summary.csv",
+        main_metrics=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv"
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        motion_threshold=config.get("motion_threshold", 0.2),
+        parcellations=config.get("parcellations", "50 100 200"),
+        thresholds="0.15 0.20 0.25"
+    conda:
+        "environment.yml"
+    threads: config.get("threads", 4)
+    resources:
+        mem_mb=config.get("mem_mb", 16000)
+    log:
+        f"{LOGS_DIR}/C3_main_landscape.log"
+    shell:
+        """
+        python {CODE_DIR}/C3_perform_main_landscape_analysis.py \
+            --project {PROJECT_DIR} \
+            --pgs {input.prs} \
+            --social {input.social} \
+            --behavioural {input.behavioural} \
+            --phenotypic {input.phenotypic} \
+            --movement {input.movement} \
+            --ids {input.ids} \
+            --matrices-dir {params.matrices_dir} \
+            --partition {input.partition} \
+            --parcellations {params.parcellations} \
+            --thresholds {params.thresholds} \
+            --motion-threshold {params.motion_threshold} > {log} 2>&1
+        """
+
+
+rule continuous_heteroscedasticity_analysis:
+    """Continuous heteroscedasticity analysis testing landscape theory"""
+    input:
+        prs=f"{RESULTS_DIR}/prs_residuals.csv",
+        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
+        movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
+        partition=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
+        main_report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt"
+    output:
+        report=f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
+        results=f"{RESULTS_DIR}/C3b_heteroscedasticity_results.csv"
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        motion_threshold=config.get("motion_threshold", 0.2),
+        n_nodes=100,
+        threshold=0.2
+    conda:
+        "environment.yml"
+    threads: config.get("threads", 4)
+    resources:
+        mem_mb=config.get("mem_mb", 16000)
+    log:
+        f"{LOGS_DIR}/C3b_continuous_heteroscedasticity.log"
+    shell:
+        """
+        python {CODE_DIR}/C3b_continuous_heteroscedasticity_analysis.py \
+            --project {PROJECT_DIR} \
+            --pgs {input.prs} \
+            --social {input.social} \
+            --behavioural {input.behavioural} \
+            --phenotypic {input.phenotypic} \
+            --movement {input.movement} \
+            --ids {input.ids} \
+            --matrices-dir {params.matrices_dir} \
+            --partition {input.partition} \
+            --n-nodes {params.n_nodes} \
+            --threshold {params.threshold} \
+            --motion-threshold {params.motion_threshold} > {log} 2>&1
+        """
+
+
+rule visualize_networks:
+    """Visualize network results"""
+    input:
+        pgs=f"{RESULTS_DIR}/prs_residuals.csv",
+        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        graph_metrics=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv",
+        partition=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
+        ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        n_nodes=100,
+        n_bootstrap=config.get("n_bootstrap", 1000),
+        sample_size=config.get("bootstrap_sample_size", 90)
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/C5_visualize_networks.log"
+    shell:
+        """
+        python {CODE_DIR}/C5_visualize_networks.py \
+            --project {PROJECT_DIR} \
+            --pgs {input.pgs} \
+            --social {input.social} \
+            --graph-metrics {input.graph_metrics} \
+            --partition {input.partition} \
+            --ids {input.ids} \
+            --matrices-dir {params.matrices_dir} \
+            --n-nodes {params.n_nodes} \
+            --n-bootstrap {params.n_bootstrap} \
+            --sample-size {params.sample_size} > {log} 2>&1
+        """
+
+
+rule generate_publication_figures:
+    """Generate standalone publication-ready SVG figures"""
+    input:
+        graph_metrics=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv",
+        ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
+    output:
+        fig1=f"{PROJECT_DIR}/figures/publication/fig_pgs_social_scatter.svg",
+        fig2=f"{PROJECT_DIR}/figures/publication/fig_pgs_distribution.svg",
+        fig3=f"{PROJECT_DIR}/figures/publication/fig_pgs_group_boxplot.svg",
+        fig4=f"{PROJECT_DIR}/figures/publication/fig_modularity_social_scatter.svg",
+        fig5=f"{PROJECT_DIR}/figures/publication/fig_modularity_variability_bar.svg",
+        fig6=f"{PROJECT_DIR}/figures/publication/fig_efficiency_variability_bar.svg",
+        fig7=f"{PROJECT_DIR}/figures/publication/fig_network_organization_space.svg",
+        fig8=f"{PROJECT_DIR}/figures/publication/fig_compensation_strategies.svg",
+        fig9=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_modularity.svg",
+        fig10=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_global_efficiency.svg",
+        fig11=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_ellipse_extent.svg"
+    params:
+        results_file=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/generate_publication_figures.log"
+    shell:
+        """
+        python {CODE_DIR}/generate_publication_figures.py \
+            --project {PROJECT_DIR} \
+            --results-file {params.results_file} > {log} 2>&1
+        """
+
+
+# ============================================================================
+# Quality Control & Reporting
+# ============================================================================
+
+rule check_data_retention:
+    """Check subject ID retention across analysis steps"""
+    input:
+        behavioural=f"{RESULTS_DIR}/behavioural_data_preprocessed.csv",
+        cfa=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        prs=f"{PLINK_DIR}/full_prs_scores.snp.blp.profile",
+        prs_residuals=f"{RESULTS_DIR}/prs_residuals.csv",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+    output:
+        f"{RESULTS_DIR}/DataRetention_Overview.csv"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/check_data_retention.log"
+    shell:
+        """
+        python {CODE_DIR}/utils/check_IDs_per_step.py \
+            --project {PROJECT_DIR} \
+            --behavioural {input.behavioural} \
+            --cfa {input.cfa} \
+            --prs {input.prs} \
+            --prs-residuals {input.prs_residuals} \
+            --ids {input.ids} \
+            --output {output} > {log} 2>&1
+        """
+
+
+# ============================================================================
+# Utility Rules
+# ============================================================================
+
+rule clean:
+    """Remove all generated files"""
+    shell:
+        """
+        # Results directory
+        rm -rf {RESULTS_DIR}/*
+
+        # Phase A outputs
+        rm -f {DATA_DIR}/behavioural_data_preprocessed.csv
+        rm -f {DATA_DIR}/cfa_factor_scores_full_sample.csv
+
+        # Phase B outputs
+        rm -f {DATA_DIR}/prs_selected_threshold.txt
+        rm -f {DATA_DIR}/prs_residuals.csv
+        # Clean all PLINK working directory outputs (inputs are in genetics_data/)
+        rm -rf {PLINK_DIR}/*
+
+        # Phase C outputs
+        rm -f {DATA_DIR}/merged_fMRI_data.csv
+        rm -f {DATA_DIR}/C2_final_partition_*.csv
+
+        # Quality control outputs
+        rm -f {DATA_DIR}/DataRetention_Overview.csv
+
+        # Reports and figures
+        rm -f {PROJECT_DIR}/reports/A1_*.txt
+        rm -f {PROJECT_DIR}/reports/A2_*.txt
+        rm -f {PROJECT_DIR}/reports/A3_*.txt
+        rm -f {PROJECT_DIR}/reports/B3_*.txt
+        rm -f {PROJECT_DIR}/reports/B5_*.txt
+        rm -f {PROJECT_DIR}/reports/C1_*.txt
+        rm -f {PROJECT_DIR}/reports/C2_*.txt
+        rm -f {PROJECT_DIR}/reports/C3_*.txt
+        rm -f {PROJECT_DIR}/reports/C3b_*.txt
+        rm -f {PROJECT_DIR}/reports/C5_*.txt
+        rm -f {PROJECT_DIR}/figures/A1_*.png
+        rm -f {PROJECT_DIR}/figures/A2_*.png
+        rm -f {PROJECT_DIR}/figures/A3_*.png
+        rm -f {PROJECT_DIR}/figures/B3_*.png
+        rm -f {PROJECT_DIR}/figures/B5_*.png
+        rm -f {PROJECT_DIR}/figures/C1_*.png
+        rm -f {PROJECT_DIR}/figures/C2_*.png
+        rm -f {PROJECT_DIR}/figures/C3_*.png
+        rm -f {PROJECT_DIR}/figures/C3b_*.png
+        rm -f {PROJECT_DIR}/figures/C4_*.png
+        rm -f {PROJECT_DIR}/figures/C5_*.png
+        rm -f {DATA_DIR}/C5_*.npy
+
+        # Publication figures
+        rm -rf {PROJECT_DIR}/figures/publication/
+
+        # Logs
+        rm -f {LOGS_DIR}/*
+        """
