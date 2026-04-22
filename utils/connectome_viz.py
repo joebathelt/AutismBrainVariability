@@ -11,6 +11,7 @@ import matplotlib.patches as patches
 import os
 import pandas as pd
 import networkx as nx
+import time
 from typing import List, Dict, Tuple, Optional
 
 def linear_to_matrix_indices(linear_indices, n_nodes):
@@ -486,7 +487,17 @@ def create_bezier_connectome(
     # Save the figure if output path is provided
     if output_path:
         plt.tight_layout()
-        plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+        for attempt in range(5):
+            try:
+                plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+                break
+            except OSError as e:
+                if attempt < 4 and e.errno == 35:
+                    print(f"  Filesystem lock saving {output_path}, "
+                          f"retrying ({attempt+1}/5)...")
+                    time.sleep(1.0)
+                else:
+                    raise
     
     if show_matrix_thumbnail:
         return fig, (ax, ax_thumbnail)

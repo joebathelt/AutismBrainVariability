@@ -13,7 +13,7 @@ This script creates network visualizations for the brain compensation analysis:
 Usage:
     python C5_visualize_networks.py \
         --project /path/to/project \
-        --pgs data/prs_residuals.csv \
+        --pgs data/pgs_residuals.csv \
         --social data/cfa_factor_scores_full_sample.csv \
         --graph-metrics results/C4_network_metrics_100nodes_0.20thresh.csv \
         --partition data/C2_final_partition_100Nodes.csv \
@@ -59,7 +59,7 @@ def parse_args():
         description="C6: Network visualization for brain compensation analysis"
     )
     parser.add_argument("--project", required=True, help="Project directory path")
-    parser.add_argument("--pgs", required=True, help="PGS/PRS residuals file (from B4)")
+    parser.add_argument("--pgs", required=True, help="PGS/PGS residuals file (from B4)")
     parser.add_argument("--social", required=True, help="Social scores file")
     parser.add_argument("--graph-metrics", required=True,
                         help="Graph metrics CSV (from C5 sensitivity analysis)")
@@ -548,7 +548,7 @@ def main():
     # Groups: low (<-1 SD), middle (-0.5 to 0.5 SD), high (>+1 SD)
     # Subjects between -1 and -0.5, and between 0.5 and 1 are excluded
     pgs_raw = pd.read_csv(args.pgs)
-    pgs_raw['pgs_z'] = zscore(pgs_raw['blup_PRS_residuals'])
+    pgs_raw['pgs_z'] = zscore(pgs_raw['blup_PGS_residuals'])
     pgs_raw['pgs_group'] = pd.cut(
         pgs_raw['pgs_z'],
         bins=[-np.inf, -1.0, -0.5, 0.5, 1.0, np.inf],

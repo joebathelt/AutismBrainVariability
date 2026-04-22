@@ -1,6 +1,6 @@
 """
 Snakemake workflow for Brain Compensation project
-Analysis pipeline for integrating phenotypic, genetic (PRS), and fMRI data
+Analysis pipeline for integrating phenotypic, genetic (PGS), and fMRI data
 """
 
 configfile: "config.yaml"
@@ -30,18 +30,21 @@ rule all:
         f"{PROJECT_DIR}/figures/A3_social_factor_evaluation.png",
         f"{PROJECT_DIR}/reports/A3_evaluate_social_factor_report.txt",
 
-        # Phase B: Genetic/PRS analysis
+        # Phase B: Genetic/PGS analysis
         f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
         f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt",
-        f"{PLINK_DIR}/full_prs_scores.snp.blp.profile",
-        f"{PROJECT_DIR}/figures/B3_prs_threshold_evaluation.png",
+        f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile",
+        f"{PROJECT_DIR}/figures/B3_pgs_threshold_evaluation.png",
         f"{PROJECT_DIR}/figures/B5_blup_evaluation.png",
-        f"{RESULTS_DIR}/prs_residuals.csv",
+        f"{RESULTS_DIR}/pgs_residuals.csv",
 
         # Phase C: fMRI analysis
         f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt",
         f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
         f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
+        f"{PROJECT_DIR}/reports/C2b_evaluate_parcellations_report.txt",
+        f"{RESULTS_DIR}/C2b_parcellation_evaluation.csv",
+        f"{PROJECT_DIR}/figures/C2b_parcellation_tuning_curves.png",
         f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
         f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
         f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
@@ -130,7 +133,7 @@ rule evaluate_social_factor:
 
 
 # ============================================================================
-# Phase B: Genetic/PRS Analysis
+# Phase B: Genetic/PGS Analysis
 # ============================================================================
 
 rule plinkqc_genotype_qc:
@@ -149,49 +152,49 @@ rule plinkqc_genotype_qc:
         """
 
 
-rule translate_prs_to_hcp:
-    """SNP harmonization, PCA, relatedness filtering, and PRS calculation (B2)"""
+rule translate_pgs_to_hcp:
+    """SNP harmonization, PCA, relatedness filtering, and PGS calculation (B2)"""
     input:
         clean_bed=f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
         gwas=f"{GENETICS_INPUT_DIR}/iPSYCH_PGC_ASD_Nov_2017.gz",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
     output:
-        prs_scores=f"{PLINK_DIR}/hcp_prs_scores.profile",
+        pgs_scores=f"{PLINK_DIR}/hcp_pgs_scores.profile",
         pca=f"{PLINK_DIR}/Neuro_Chip_full_sample_pca.eigenvec",
         qc_bed=f"{PLINK_DIR}/Neuro_Chip_qc_nodup_sexfiltered.bed",
-        unrelated_prs=f"{PLINK_DIR}/unrelated_prs_scores.txt"
+        unrelated_pgs=f"{PLINK_DIR}/unrelated_pgs_scores.txt"
     log:
-        f"{LOGS_DIR}/B2_translate_prs.log"
+        f"{LOGS_DIR}/B2_translate_pgs.log"
     shell:
         """
-        bash {CODE_DIR}/B2_translate_PRS_to_HCP.sh \
+        bash {CODE_DIR}/B2_translate_PGS_to_HCP.sh \
             --original-data {GENETICS_INPUT_DIR} \
             --plink-dir {PLINK_DIR} \
             --data-dir {DATA_DIR} \
             --code-dir {CODE_DIR} \
             --phenotypic {input.phenotypic} \
             --qcdir {QCDIR} \
-            --output {output.prs_scores} > {log} 2>&1
+            --output {output.pgs_scores} > {log} 2>&1
         """
 
 
-rule select_prs_threshold:
-    """Select optimal PRS threshold based on prediction performance"""
+rule select_pgs_threshold:
+    """Select optimal PGS threshold based on prediction performance"""
     input:
-        prs=f"{PLINK_DIR}/hcp_prs_scores.profile",
+        pgs=f"{PLINK_DIR}/hcp_pgs_scores.profile",
         phenotype=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         pca=f"{PLINK_DIR}/Neuro_Chip_full_sample_pca.eigenvec"
     output:
-        plot=f"{PROJECT_DIR}/figures/B3_prs_threshold_evaluation.png",
-        selected=f"{RESULTS_DIR}/prs_selected_threshold.txt"
+        plot=f"{PROJECT_DIR}/figures/B3_pgs_threshold_evaluation.png",
+        selected=f"{RESULTS_DIR}/pgs_selected_threshold.txt"
     conda:
         "environment.yml"
     log:
-        f"{LOGS_DIR}/B3_select_prs_threshold.log"
+        f"{LOGS_DIR}/B3_select_pgs_threshold.log"
     shell:
         """
-        python {CODE_DIR}/B3_select_PRS_threshold.py \
-            --prs {input.prs} \
+        python {CODE_DIR}/B3_select_PGS_threshold.py \
+            --pgs {input.pgs} \
             --phenotype {input.phenotype} \
             --pca {input.pca} \
             --output-plot {output.plot} \
@@ -200,21 +203,21 @@ rule select_prs_threshold:
         """
 
 
-rule extend_prs_with_blup:
-    """Extend PRS with BLUP predictions"""
+rule extend_pgs_with_blup:
+    """Extend PGS with BLUP predictions"""
     input:
-        prs=f"{PLINK_DIR}/hcp_prs_scores.profile",
-        threshold=f"{RESULTS_DIR}/prs_selected_threshold.txt",
+        pgs=f"{PLINK_DIR}/hcp_pgs_scores.profile",
+        threshold=f"{RESULTS_DIR}/pgs_selected_threshold.txt",
         bfile=f"{PLINK_DIR}/Neuro_Chip_qc_nodup_sexfiltered.bed"
     output:
-        f"{PLINK_DIR}/full_prs_scores.snp.blp.profile"
+        f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile"
     log:
-        f"{LOGS_DIR}/B4_extend_prs_blup.log"
+        f"{LOGS_DIR}/B4_extend_pgs_blup.log"
     shell:
         """
-        bash {CODE_DIR}/B4_extend_PRS_with_BLUP.sh \
+        bash {CODE_DIR}/B4_extend_PGS_with_BLUP.sh \
             --plink-dir {PLINK_DIR} \
-            --prs-file {input.prs} \
+            --pgs-file {input.pgs} \
             --threshold-file {input.threshold} \
             --gcta-path {GCTA_PATH} \
             --output {output} > {log} 2>&1
@@ -224,15 +227,15 @@ rule extend_prs_with_blup:
 rule evaluate_blup:
     """Evaluate BLUP prediction accuracy"""
     input:
-        blup_prs=f"{PLINK_DIR}/full_prs_scores.snp.blp.profile",
-        original_prs=f"{PLINK_DIR}/unrelated_prs_scores.txt",
+        blup_pgs=f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile",
+        original_pgs=f"{PLINK_DIR}/unrelated_pgs_scores.txt",
         social_scores=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         pca=f"{PLINK_DIR}/Neuro_Chip_full_sample_pca.eigenvec"
     output:
         plot=f"{PROJECT_DIR}/figures/B5_blup_evaluation.png",
-        residuals=f"{RESULTS_DIR}/prs_residuals.csv"
+        residuals=f"{RESULTS_DIR}/pgs_residuals.csv"
     conda:
         "environment.yml"
     log:
@@ -240,8 +243,8 @@ rule evaluate_blup:
     shell:
         """
         python {CODE_DIR}/B5_evalute_BLUP_prediction.py \
-            --blup-prs {input.blup_prs} \
-            --original-prs {input.original_prs} \
+            --blup-pgs {input.blup_pgs} \
+            --original-pgs {input.original_pgs} \
             --social-scores {input.social_scores} \
             --phenotypic {input.phenotypic} \
             --behavioural {input.behavioural} \
@@ -259,7 +262,7 @@ rule evaluate_blup:
 rule univariate_fmri_prediction:
     """Run univariate fMRI prediction analysis"""
     input:
-        prs=f"{RESULTS_DIR}/prs_residuals.csv",
+        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
@@ -283,7 +286,7 @@ rule univariate_fmri_prediction:
         python {CODE_DIR}/C1_run_univariate_fMRI_prediction.py \
             --project {PROJECT_DIR} \
             --social {input.social} \
-            --pgs {input.prs} \
+            --pgs {input.pgs} \
             --behavioural {input.behavioural} \
             --phenotypic {input.phenotypic} \
             --movement {input.movement} \
@@ -302,11 +305,14 @@ rule find_fmri_communities:
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
     output:
         report=f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
+        partition_15=f"{RESULTS_DIR}/C2_final_partition_15Nodes.csv",
+        partition_25=f"{RESULTS_DIR}/C2_final_partition_25Nodes.csv",
         partition_50=f"{RESULTS_DIR}/C2_final_partition_50Nodes.csv",
         partition_100=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
-        partition_200=f"{RESULTS_DIR}/C2_final_partition_200Nodes.csv"
+        partition_200=f"{RESULTS_DIR}/C2_final_partition_200Nodes.csv",
+        partition_300=f"{RESULTS_DIR}/C2_final_partition_300Nodes.csv"
     params:
-        parcellations=config.get("parcellations", "50 100 200"),
+        parcellations="15 25 50 100 200 300",
         n_iterations=config.get("n_iterations", 50),
         target_communities=config.get("target_communities", "5 15")
     conda:
@@ -325,10 +331,36 @@ rule find_fmri_communities:
         """
 
 
+rule evaluate_parcellations:
+    """Evaluate community detection across all HCP ICA parcellation sizes"""
+    input:
+        report=f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C2b_evaluate_parcellations_report.txt",
+        results=f"{RESULTS_DIR}/C2b_parcellation_evaluation.csv",
+        figure=f"{PROJECT_DIR}/figures/C2b_parcellation_tuning_curves.png"
+    params:
+        parcellations="15 25 50 100 200 300",
+        target_communities=config.get("target_communities", "5 8")
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/C2b_evaluate_parcellations.log"
+    shell:
+        """
+        python {CODE_DIR}/C2b_evaluate_communities.py \
+            --project {PROJECT_DIR} \
+            --matrices-dir {input.matrices_dir} \
+            --parcellations {params.parcellations} \
+            --target-communities {params.target_communities} > {log} 2>&1
+        """
+
+
 rule main_landscape_analysis:
     """Perform main landscape analysis with sensitivity analyses"""
     input:
-        prs=f"{RESULTS_DIR}/prs_residuals.csv",
+        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
@@ -356,7 +388,7 @@ rule main_landscape_analysis:
         """
         python {CODE_DIR}/C3_perform_main_landscape_analysis.py \
             --project {PROJECT_DIR} \
-            --pgs {input.prs} \
+            --pgs {input.pgs} \
             --social {input.social} \
             --behavioural {input.behavioural} \
             --phenotypic {input.phenotypic} \
@@ -373,7 +405,7 @@ rule main_landscape_analysis:
 rule continuous_heteroscedasticity_analysis:
     """Continuous heteroscedasticity analysis testing landscape theory"""
     input:
-        prs=f"{RESULTS_DIR}/prs_residuals.csv",
+        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
@@ -400,7 +432,7 @@ rule continuous_heteroscedasticity_analysis:
         """
         python {CODE_DIR}/C3b_continuous_heteroscedasticity_analysis.py \
             --project {PROJECT_DIR} \
-            --pgs {input.prs} \
+            --pgs {input.pgs} \
             --social {input.social} \
             --behavioural {input.behavioural} \
             --phenotypic {input.phenotypic} \
@@ -417,7 +449,7 @@ rule continuous_heteroscedasticity_analysis:
 rule visualize_networks:
     """Visualize network results"""
     input:
-        pgs=f"{RESULTS_DIR}/prs_residuals.csv",
+        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         graph_metrics=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv",
         partition=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
@@ -490,8 +522,8 @@ rule check_data_retention:
     input:
         behavioural=f"{RESULTS_DIR}/behavioural_data_preprocessed.csv",
         cfa=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
-        prs=f"{PLINK_DIR}/full_prs_scores.snp.blp.profile",
-        prs_residuals=f"{RESULTS_DIR}/prs_residuals.csv",
+        pgs=f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile",
+        pgs_residuals=f"{RESULTS_DIR}/pgs_residuals.csv",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
     output:
         f"{RESULTS_DIR}/DataRetention_Overview.csv"
@@ -505,8 +537,8 @@ rule check_data_retention:
             --project {PROJECT_DIR} \
             --behavioural {input.behavioural} \
             --cfa {input.cfa} \
-            --prs {input.prs} \
-            --prs-residuals {input.prs_residuals} \
+            --pgs {input.pgs} \
+            --pgs-residuals {input.pgs_residuals} \
             --ids {input.ids} \
             --output {output} > {log} 2>&1
         """
@@ -528,8 +560,10 @@ rule clean:
         rm -f {DATA_DIR}/cfa_factor_scores_full_sample.csv
 
         # Phase B outputs
-        rm -f {DATA_DIR}/prs_selected_threshold.txt
-        rm -f {DATA_DIR}/prs_residuals.csv
+        rm -f {DATA_DIR}/pgs_selected_threshold.txt
+        rm -f {DATA_DIR}/pgs_residuals.csv
+        # Clean B1 plinkQC output directory
+        rm -rf {QCDIR}/*
         # Clean all PLINK working directory outputs (inputs are in genetics_data/)
         rm -rf {PLINK_DIR}/*
 
@@ -544,6 +578,7 @@ rule clean:
         rm -f {PROJECT_DIR}/reports/A1_*.txt
         rm -f {PROJECT_DIR}/reports/A2_*.txt
         rm -f {PROJECT_DIR}/reports/A3_*.txt
+        rm -f {PROJECT_DIR}/reports/B1_*.txt
         rm -f {PROJECT_DIR}/reports/B3_*.txt
         rm -f {PROJECT_DIR}/reports/B5_*.txt
         rm -f {PROJECT_DIR}/reports/C1_*.txt
@@ -554,6 +589,7 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/A1_*.png
         rm -f {PROJECT_DIR}/figures/A2_*.png
         rm -f {PROJECT_DIR}/figures/A3_*.png
+        rm -f {PROJECT_DIR}/figures/B1_*.png
         rm -f {PROJECT_DIR}/figures/B3_*.png
         rm -f {PROJECT_DIR}/figures/B5_*.png
         rm -f {PROJECT_DIR}/figures/C1_*.png
@@ -563,6 +599,19 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/C4_*.png
         rm -f {PROJECT_DIR}/figures/C5_*.png
         rm -f {DATA_DIR}/C5_*.npy
+
+        # Bezier connectome plots from C1 (not prefixed with C1_)
+        rm -f {PROJECT_DIR}/figures/*_positive.png
+        rm -f {PROJECT_DIR}/figures/*_negative.png
+        rm -f {PROJECT_DIR}/figures/*_surf.png
+
+        # Stale pre-rename outputs (B0->B1, B2->B3, B4->B5)
+        rm -f {PROJECT_DIR}/reports/B0_*.txt
+        rm -f {PROJECT_DIR}/reports/B2_*.txt
+        rm -f {PROJECT_DIR}/reports/B4_*.txt
+        rm -f {PROJECT_DIR}/figures/B0_*.png
+        rm -f {PROJECT_DIR}/figures/B2_*.png
+        rm -f {PROJECT_DIR}/figures/B4_*.png
 
         # Publication figures
         rm -rf {PROJECT_DIR}/figures/publication/

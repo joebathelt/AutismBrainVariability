@@ -110,7 +110,7 @@ def load_and_prepare_data(project_folder, pgs_file, social_file, behavioural_fil
     # Create PGS groups
     # Groups: low (<-1 SD), middle (-0.5 to 0.5 SD), high (>+1 SD)
     # Subjects between -1 and -0.5, and between 0.5 and 1 are excluded
-    merged_df['pgs_z'] = zscore(merged_df['blup_PRS_residuals'])
+    merged_df['pgs_z'] = zscore(merged_df['blup_PGS_residuals'])
     merged_df['pgs_group'] = pd.cut(
         merged_df['pgs_z'],
         bins=[-np.inf, -1.0, -0.5, 0.5, 1.0, np.inf],
@@ -757,7 +757,7 @@ def main():
     parser.add_argument('--project', required=True,
                         help='Path to project directory')
     parser.add_argument('--pgs', required=False,
-                        help='Path to PGS/PRS residuals CSV')
+                        help='Path to PGS/PGS residuals CSV')
     parser.add_argument('--social', required=False,
                         help='Path to social factor scores CSV')
     parser.add_argument('--behavioural', required=False,
@@ -801,7 +801,7 @@ def main():
 
     # Set up file paths with defaults
     pgs_file = (Path(args.pgs) if args.pgs
-                else project_folder / "data/prs_residuals.csv")
+                else project_folder / "data/pgs_residuals.csv")
     social_file = (Path(args.social) if args.social
                    else project_folder / 'data/cfa_factor_scores_full_sample.csv')
     behavioural_file = (Path(args.behavioural) if args.behavioural

@@ -2,12 +2,12 @@
 set -e
 
 # =============================================================================
-# B2_translate_PRS_to_HCP.sh
-# SNP harmonization, PCA, relatedness filtering, and PRS calculation
+# B2_translate_PGS_to_HCP.sh
+# SNP harmonization, PCA, relatedness filtering, and PGS calculation
 #
 # Starts from B1 plinkQC clean output (Neuro_Chip_anonymised.clean.bed/bim/fam).
 # Genotype QC (MAF, HWE, missingness, sex check, heterozygosity, ancestry)
-# is handled by B1_plinkQC_genotype_qc.R. This script handles PRS-specific
+# is handled by B1_plinkQC_genotype_qc.R. This script handles PGS-specific
 # steps: harmonizing SNP alleles with GWAS summary stats, computing PCA,
 # filtering to unrelated individuals, and running PRSice.
 # =============================================================================
@@ -21,7 +21,7 @@ usage() {
     echo "  --data-dir        Path to data directory"
     echo "  --code-dir        Path to code directory"
     echo "  --phenotypic      Path to phenotypic data CSV file"
-    echo "  --output          Path to output PRS profile file"
+    echo "  --output          Path to output PGS profile file"
     echo "  --qcdir           Path to B1 plinkQC output directory"
     echo "  --clean-name      B1 clean file prefix (default: Neuro_Chip_anonymised.clean)"
     echo "  --help            Show this help message"
@@ -89,7 +89,7 @@ if [[ ! -f "${QCDIR}/${CLEAN_NAME}.bed" ]]; then
 fi
 
 echo "============================================="
-echo "B2: SNP Harmonization & PRS Calculation"
+echo "B2: SNP Harmonization & PGS Calculation"
 echo "============================================="
 echo "B1 clean data: ${QCDIR}/${CLEAN_NAME}"
 echo "Original data: $ORIGINAL_DATA"
@@ -235,7 +235,7 @@ gunzip -c ${PLINK_FOLDER}/iPSYCH_PGC_ASD_Nov_2017.gz | awk '!seen[$2]++' | gzip 
 gunzip -c ${PLINK_FOLDER}/iPSYCH_cleaned.gz | awk '$5 != "NA" && $6 != "NA" && $7 >= 0.7' | gzip > ${PLINK_FOLDER}/iPSYCH_filtered.gz
 gunzip -c ${PLINK_FOLDER}/iPSYCH_filtered.gz | awk '$8 >= 0.01' | gzip > ${PLINK_FOLDER}/iPSYCH_qc_final.gz
 
-# Step 11: Calculate PRS at multiple thresholds for unrelated sample
+# Step 11: Calculate PGS at multiple thresholds for unrelated sample
 echo "============================================="
 echo "Step 11: Running PRSice for threshold selection..."
 
@@ -247,15 +247,15 @@ PRSice_linux \
 
 # Copy the output to the expected location
 # Note: With --no-regress, PRSice creates .all_score (multi-threshold) not .best
-# Threshold selection happens in B3_select_PRS_threshold.py
+# Threshold selection happens in B3_select_PGS_threshold.py
 cp ${PLINK_FOLDER}/Neuro_Chip_unrelated_prsice.all_score "$OUTPUT_FILE"
 
-# Also create the unrelated_prs_scores.txt for downstream evaluation
-cp ${PLINK_FOLDER}/Neuro_Chip_unrelated_prsice.all_score ${PLINK_FOLDER}/unrelated_prs_scores.txt
+# Also create the unrelated_pgs_scores.txt for downstream evaluation
+cp ${PLINK_FOLDER}/Neuro_Chip_unrelated_prsice.all_score ${PLINK_FOLDER}/unrelated_pgs_scores.txt
 
 echo ""
 echo "============================================="
 echo "B2 completed successfully."
 echo "Output written to: $OUTPUT_FILE"
-echo "Unrelated PRS scores written to: ${PLINK_FOLDER}/unrelated_prs_scores.txt"
+echo "Unrelated PGS scores written to: ${PLINK_FOLDER}/unrelated_pgs_scores.txt"
 echo "============================================="

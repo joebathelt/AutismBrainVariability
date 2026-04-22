@@ -7,12 +7,27 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pathlib import Path
 import seaborn as sns
+import time
 from matplotlib.colors import ListedColormap
 from nilearn.connectome import vec_to_sym_matrix
 from utils import connectome_viz
 import nibabel as nib
 from neuromaps.datasets import fetch_fslr
 from surfplot import Plot
+
+
+def _savefig_retry(fig_or_plt, path, max_retries=5, delay=1.0, **kwargs):
+    """Save figure with retry logic for Docker bind-mount filesystem locks."""
+    for attempt in range(max_retries):
+        try:
+            fig_or_plt.savefig(path, **kwargs)
+            return
+        except OSError as e:
+            if attempt < max_retries - 1 and e.errno == 35:
+                print(f"  Filesystem lock saving {path}, retrying ({attempt+1}/{max_retries})...")
+                time.sleep(delay)
+            else:
+                raise
 
 # %%
 def get_adaptive_gamma_range(n_nodes, target_communities=(5, 15)):
@@ -598,7 +613,7 @@ def plot_consensus_matrix(consensus_matrix, consensus_partition=None,
     plt.tight_layout()
 
     if output_file is not None:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        _savefig_retry(plt, output_file, dpi=300, bbox_inches='tight')
         print(f"Consensus matrix plot saved to: {output_file}")
 
     plt.close(fig)
@@ -739,8 +754,8 @@ def main():
     parser.add_argument('--ids', required=False,
                         help='Path to subject IDs file')
     parser.add_argument('--parcellations', nargs='+', type=int,
-                        default=[50, 100, 200],
-                        help='Parcellation sizes to analyze (default: 50 100 200)')
+                        default=[15, 25, 50, 100, 200, 300],
+                        help='Parcellation sizes to analyze (default: 15 25 50 100 200 300)')
     parser.add_argument('--n-iterations', type=int, default=50,
                         help='Number of consensus clustering iterations (default: 50)')
     parser.add_argument('--target-communities', nargs=2, type=int,
@@ -878,6 +893,8 @@ def main():
         communities = print_community_summary(final_partition)
 
         # Plot communities on surface
+        n_communities = len(set(final_partition.values()))
+        cmap = plt.cm.get_cmap('Set2', n_communities)
         if n_nodes == 50:
             cmap = ListedColormap([
                 '#A8B8C8',  # Other (softer blue-gray)
@@ -902,7 +919,7 @@ def main():
                 '#E69422'   # SomMot (warmer orange)
             ])
         fig = plot_communities_on_surface(final_partition, project_folder, cmap=cmap)
-        fig.savefig(figures_dir / f'C2_community_plot_{n_nodes}Nodes.png', dpi=300)
+        _savefig_retry(fig, figures_dir / f'C2_community_plot_{n_nodes}Nodes.png', dpi=300)
         plt.close(fig)
 
         # Save the final partition to a file
@@ -912,13 +929,20 @@ def main():
         partition_df.to_csv(results_dir / f'C2_final_partition_{n_nodes}Nodes.csv')
         report.append(f"Saved partition to: C2_final_partition_{n_nodes}Nodes.csv")
 
+        # Save iteration partitions so C2b can compute ARI without re-running detection
+        all_partitions_array = np.array(
+            [[p[node] for node in range(n_nodes)] for p in final_partitions]
+        )
+        np.save(results_dir / f'C2_all_partitions_{n_nodes}Nodes.npy', all_partitions_array)
+        report.append(f"Saved iteration partitions to: C2_all_partitions_{n_nodes}Nodes.npy")
+
         # Plot parameter landscape
         print("\nPlotting parameter landscape...")
         report.append("Plotting parameter landscape...")
         landscape_fig = plot_parameter_landscape(all_results, n_nodes)
         if landscape_fig is not None:
             landscape_file = figures_dir / f'C2_parameter_landscape_{n_nodes}Nodes.png'
-            landscape_fig.savefig(landscape_file, dpi=300, bbox_inches='tight')
+            _savefig_retry(landscape_fig, landscape_file, dpi=300, bbox_inches='tight')
             plt.close(landscape_fig)
             report.append(f"Parameter landscape saved to: {landscape_file}")
 

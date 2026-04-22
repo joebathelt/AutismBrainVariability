@@ -107,7 +107,7 @@ def load_and_prepare_data(args, report):
     # Create PGS groups
     # Groups: low (<-1 SD), middle (-0.5 to 0.5 SD), high (>+1 SD)
     # Subjects between -1 and -0.5, and between 0.5 and 1 are excluded
-    merged_base['pgs_z'] = zscore(merged_base['blup_PRS_residuals'])
+    merged_base['pgs_z'] = zscore(merged_base['blup_PGS_residuals'])
     merged_base['pgs_group'] = pd.cut(
         merged_base['pgs_z'],
         bins=[-np.inf, -1.0, -0.5, 0.5, 1.0, np.inf],
@@ -1079,7 +1079,7 @@ def main():
     parser.add_argument('--project', required=True,
                         help='Path to project directory')
     parser.add_argument('--pgs', required=True,
-                        help='Path to PGS/PRS residuals CSV')
+                        help='Path to PGS/PGS residuals CSV')
     parser.add_argument('--social', required=True,
                         help='Path to social factor scores CSV')
     parser.add_argument('--behavioural', required=True,

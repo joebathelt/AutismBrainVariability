@@ -30,8 +30,22 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.linear_model import LinearRegression
 from surfplot import Plot
 from utils import connectome_viz
+import time
 import warnings
 warnings.filterwarnings('ignore')
+
+
+def _read_csv_retry(path, max_retries=5, delay=1.0, **kwargs):
+    """Read CSV with retry logic for Docker bind-mount filesystem locking issues."""
+    for attempt in range(max_retries):
+        try:
+            return pd.read_csv(path, **kwargs)
+        except OSError as e:
+            if attempt < max_retries - 1 and e.errno == 35:  # Resource deadlock avoided
+                print(f"  Filesystem lock on {path}, retrying ({attempt+1}/{max_retries})...")
+                time.sleep(delay)
+            else:
+                raise
 
 # Set up plotting parameters
 from matplotlib import rcParams
@@ -111,7 +125,7 @@ def load_connectivity_data(matrix_file, id_file, n_nodes):
         Connectivity data with subject IDs as index
     """
     # Load connectivity matrices
-    mats_df = pd.read_csv(matrix_file, header=None, sep=r'\s+')
+    mats_df = _read_csv_retry(matrix_file, header=None, sep=r'\s+')
 
     # Extract upper triangle for non-redundancy
     linear_indices = extract_upper_triangle(n_nodes)
@@ -122,7 +136,7 @@ def load_connectivity_data(matrix_file, id_file, n_nodes):
     mats_df.columns = [f'conn_{i+1}' for i in range(n_connections)]
 
     # Load subject IDs
-    ids = pd.read_csv(id_file, header=None)[0].tolist()
+    ids = _read_csv_retry(id_file, header=None)[0].tolist()
     mats_df.index = ids
 
     print(f'Loaded connectivity data: {mats_df.shape[0]} subjects, {n_connections} connections')
@@ -326,7 +340,7 @@ def create_bezier_connectome_plot(matrix, n_nodes, project_folder, output_filena
                    if connected]
 
     # Load coordinates and create thumbnail dictionary
-    coordinates_df = pd.read_csv(
+    coordinates_df = _read_csv_retry(
         project_folder / f'data/HCP_PTN1200/groupICA/groupICA_3T_HCP1200_MSMAll_d{n_nodes}.ica/melodic_IC_node_coords.csv'
     )
     coordinates_df['label'] = [str(int(comp[2:]) + 1)
@@ -426,9 +440,19 @@ def create_surface_plot(node_vector, n_nodes, project_folder, output_filename,
     
     cbar_kws = {'fontsize': 16, 'pad': 0.05}
     fig = p.build(cbar_kws=cbar_kws)
-    fig.savefig(output_filename, dpi=300, bbox_inches='tight',
-                pad_inches=0.1)
-    
+    for attempt in range(5):
+        try:
+            fig.savefig(output_filename, dpi=300, bbox_inches='tight',
+                        pad_inches=0.1)
+            break
+        except OSError as e:
+            if attempt < 4 and e.errno == 35:
+                print(f"  Filesystem lock saving {output_filename}, "
+                      f"retrying ({attempt+1}/5)...")
+                time.sleep(1.0)
+            else:
+                raise
+
     return fig
 
 
@@ -486,8 +510,12 @@ def create_social_difficulty_visualizations(results_nodes, n_nodes, project_fold
 
     filename = (project_folder /
                 f'figures/Connectome_sign_nodes-{n_nodes}_stat-corr_surf.png')
-    create_surface_plot(node_vector, n_nodes, project_folder, filename,
-                        color_range=(-0.5, 0.5), cbar_label='Correlation Sum')
+    try:
+        create_surface_plot(node_vector, n_nodes, project_folder, filename,
+                            color_range=(-0.5, 0.5), cbar_label='Correlation Sum')
+    except Exception as e:
+        print(f"Error creating surface plot for social difficulty "
+              f"({n_nodes}-node): {e}")
 
 
 def create_group_split_visualizations(results_nodes, n_nodes, project_folder):
@@ -546,9 +574,15 @@ def create_group_split_visualizations(results_nodes, n_nodes, project_folder):
             # Create surface plot
             filename = (project_folder /
                         f'figures/GroupSplit_{comparison_name}_nodes-{n_nodes}_{params["suffix"]}_surf.png')
-            create_surface_plot(node_vector, n_nodes, project_folder, filename,
-                                cmap=params['cmap'], color_range=color_range,
-                                cbar_label=params['label'])
+            try:
+                create_surface_plot(node_vector, n_nodes, project_folder,
+                                    filename, cmap=params['cmap'],
+                                    color_range=color_range,
+                                    cbar_label=params['label'])
+            except Exception as e:
+                print(f"Error creating surface plot for "
+                      f"{comparison_name} ({n_nodes}-node, "
+                      f"{params['suffix']}): {e}")
 
 
 # %%
@@ -580,7 +614,7 @@ class ConnectivityAnalysis:
         phenotypic_file : str or Path, optional
             Path to phenotypic data file
         pgs_file : str or Path, optional
-            Path to PGS/PRS file
+            Path to PGS/PGS file
         social_file : str or Path, optional
             Path to social factor scores file
         movement_file : str or Path, optional
@@ -603,7 +637,7 @@ class ConnectivityAnalysis:
         self.phenotypic_file = (Path(phenotypic_file) if phenotypic_file 
                                 else self.project_folder / "data/phenotypic_data_anonymised.csv")
         self.pgs_file = (Path(pgs_file) if pgs_file 
-                        else self.project_folder / "data/prs_residuals.csv")
+                        else self.project_folder / "data/pgs_residuals.csv")
         self.social_file = (Path(social_file) if social_file 
                            else self.project_folder / 'data/cfa_factor_scores_full_sample.csv')
         self.movement_file = (Path(movement_file) if movement_file 
@@ -621,11 +655,11 @@ class ConnectivityAnalysis:
         print("Loading phenotypic data...")
 
         # Load individual datasets
-        self.pgs_df = pd.read_csv(self.pgs_file)
-        self.social_df = pd.read_csv(self.social_file)
-        self.behavioural_df = pd.read_csv(self.behavioural_file)
-        self.phenotypic_df = pd.read_csv(self.phenotypic_file)
-        self.movement_df = pd.read_csv(self.movement_file)
+        self.pgs_df = _read_csv_retry(self.pgs_file)
+        self.social_df = _read_csv_retry(self.social_file)
+        self.behavioural_df = _read_csv_retry(self.behavioural_file)
+        self.phenotypic_df = _read_csv_retry(self.phenotypic_file)
+        self.movement_df = _read_csv_retry(self.movement_file)
 
         print(f"Loaded data for {len(self.pgs_df)} subjects")
 
@@ -711,7 +745,7 @@ class ConnectivityAnalysis:
 
         # Outcome variables
         y_social = merged_df['Social_Score'].values
-        pgs = merged_df['blup_PRS_residuals'].values
+        pgs = merged_df['blup_PGS_residuals'].values
 
         # Standardization and preprocessing
         scaler = RobustScaler()
@@ -1050,7 +1084,7 @@ def main():
     parser.add_argument('--social', required=False,
                         help='Path to social factor scores CSV')
     parser.add_argument('--pgs', required=False,
-                        help='Path to PGS/PRS residuals CSV')
+                        help='Path to PGS/PGS residuals CSV')
     parser.add_argument('--behavioural', required=False,
                         help='Path to behavioural data CSV')
     parser.add_argument('--phenotypic', required=False,
@@ -1112,13 +1146,21 @@ def main():
 
         print(f"\nCreating visualizations for {n_nodes}-node parcellation...")
 
-        # Create social difficulty visualizations
-        create_social_difficulty_visualizations(results_nodes, n_nodes,
-                                                 project_folder)
+        try:
+            # Create social difficulty visualizations
+            create_social_difficulty_visualizations(results_nodes, n_nodes,
+                                                     project_folder)
+        except Exception as e:
+            print(f"Error in social difficulty visualizations "
+                  f"({n_nodes}-node): {e}")
 
-        # Create group-split visualizations
-        create_group_split_visualizations(results_nodes, n_nodes,
-                                          project_folder)
+        try:
+            # Create group-split visualizations
+            create_group_split_visualizations(results_nodes, n_nodes,
+                                              project_folder)
+        except Exception as e:
+            print(f"Error in group-split visualizations "
+                  f"({n_nodes}-node): {e}")
 
     # Print detailed group-split results summary
     header = "\n" + "="*60

@@ -1,10 +1,10 @@
 """
-B3_select_PRS_threshold.py
-Select PRS threshold for analysis
+B3_select_PGS_threshold.py
+Select PGS threshold for analysis
 
-This script uses a fixed p-value threshold (p=0.1) for PRS, which was the
+This script uses a fixed p-value threshold (p=0.1) for PGS, which was the
 optimal threshold identified in Grove et al. (2019) - the discovery GWAS
-for autism that this PRS is based on. Using the discovery GWAS threshold
+for autism that this PGS is based on. Using the discovery GWAS threshold
 is the most principled approach as it:
 1. Avoids overfitting to sample-specific noise
 2. Ensures reproducibility across runs
@@ -14,8 +14,8 @@ The script also runs cross-validation to report performance metrics for
 transparency, but does not use CV results to select the threshold.
 
 Usage:
-    python B3_select_PRS_threshold.py \
-        --prs <path> \
+    python B3_select_PGS_threshold.py \
+        --pgs <path> \
         --phenotype <path> \
         --pca <path> \
         --output-plot <path> \
@@ -46,19 +46,19 @@ rcParams['legend.fontsize'] = 9
 mm2inches = 0.0393701
 
 
-def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output_threshold,
+def select_pgs_threshold(pgs_file, phenotype_file, pca_file, output_plot, output_threshold,
                          report_file, figures_dir, target_threshold=0.1):
     """
-    Use a fixed PRS threshold (default p=0.1) for reproducibility.
+    Use a fixed PGS threshold (default p=0.1) for reproducibility.
 
     Using p=0.1 because:
     1. This was the optimal threshold in Grove et al. (2019), the discovery GWAS
-       for autism that this PRS is based on
+       for autism that this PGS is based on
     2. Using the discovery GWAS threshold is the most principled approach
     3. Avoids overfitting to sample-specific noise in threshold selection
 
     Steps:
-    1. Load PRS scores at multiple thresholds
+    1. Load PGS scores at multiple thresholds
     2. Load social cognition scores
     3. Load PCA data for population stratification correction
     4. Use fixed p=0.1 threshold (from Grove et al. 2019)
@@ -66,7 +66,7 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
     6. Generate visualization and report
 
     Parameters:
-        prs_file (Path): Path to PRS scores file (all_score format).
+        pgs_file (Path): Path to PGS scores file (all_score format).
         phenotype_file (Path): Path to phenotype data with social scores.
         pca_file (Path): Path to PCA eigenvector file.
         output_plot (Path): Path to save the threshold evaluation plot.
@@ -81,20 +81,20 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
     # Initialize report content
     report = []
     report.append("=" * 80)
-    report.append("B3: PRS THRESHOLD REPORT (FIXED p=0.1)")
+    report.append("B3: PGS THRESHOLD REPORT (FIXED p=0.1)")
     report.append("=" * 80)
     report.append("")
     report.append(f"Using fixed threshold p={target_threshold}")
     report.append("Rationale: p=0.1 was the optimal threshold in Grove et al. (2019),")
-    report.append("the discovery GWAS for autism that this PRS is based on.")
+    report.append("the discovery GWAS for autism that this PGS is based on.")
     report.append("Using the discovery GWAS threshold is the most principled approach.")
     report.append("")
 
     # Load PGS scores for unrelated individuals
     report.append("LOADING DATA:")
     report.append("-" * 80)
-    PGS_df = pd.read_csv(prs_file, sep=' ')
-    report.append(f"PRS data shape: {PGS_df.shape}")
+    PGS_df = pd.read_csv(pgs_file, sep=' ')
+    report.append(f"PGS data shape: {PGS_df.shape}")
 
     # Load social cognition scores
     social_df = pd.read_csv(phenotype_file)
@@ -112,9 +112,9 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
     report.append(f"Merged data shape: {merged_df.shape}")
     report.append("")
 
-    # Get all available PRS thresholds
-    prs_thresholds = [col for col in merged_df.columns if col.startswith('Pt_')]
-    report.append(f"Available PRS thresholds: {len(prs_thresholds)}")
+    # Get all available PGS thresholds
+    pgs_thresholds = [col for col in merged_df.columns if col.startswith('Pt_')]
+    report.append(f"Available PGS thresholds: {len(pgs_thresholds)}")
     report.append("")
 
     # Find the threshold closest to target (p=0.05)
@@ -125,7 +125,7 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
             return float('inf')
 
     # Sort thresholds by distance to target
-    thresholds_with_pvals = [(t, get_pvalue(t)) for t in prs_thresholds]
+    thresholds_with_pvals = [(t, get_pvalue(t)) for t in pgs_thresholds]
     thresholds_with_pvals.sort(key=lambda x: abs(x[1] - target_threshold))
     selected_threshold = thresholds_with_pvals[0][0]
     selected_pval = thresholds_with_pvals[0][1]
@@ -152,13 +152,13 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
     # Evaluate selected threshold
     correlations = []
     for train_idx, test_idx in kf.split(merged_df):
-        merged_df['thresholded_PRS'] = merged_df[selected_threshold]
+        merged_df['thresholded_PGS'] = merged_df[selected_threshold]
         train_data = merged_df.iloc[train_idx]
         test_data = merged_df.iloc[test_idx]
 
-        pc_model = smf.ols(f'thresholded_PRS ~ {pc_formula}', data=train_data).fit()
-        test_prs_corrected = test_data['thresholded_PRS'] - pc_model.predict(test_data)
-        corr, _ = pearsonr(test_prs_corrected, test_data['Social_Score'])
+        pc_model = smf.ols(f'thresholded_PGS ~ {pc_formula}', data=train_data).fit()
+        test_pgs_corrected = test_data['thresholded_PGS'] - pc_model.predict(test_data)
+        corr, _ = pearsonr(test_pgs_corrected, test_data['Social_Score'])
         correlations.append(corr)
 
     avg_corr = np.mean(correlations)
@@ -187,48 +187,48 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
     report.append(f"Selected threshold saved to: {output_threshold}")
     report.append("")
 
-    # Save z-scored PRS for unrelated individuals (for BLUP in B3)
+    # Save z-scored PGS for unrelated individuals (for BLUP in B3)
     # This ensures B3 uses the same filtered sample as threshold selection
     # Note: FID may be renamed to FID_x after merge with pca_df
     fid_col = 'FID_x' if 'FID_x' in merged_df.columns else 'FID'
-    prs_for_blup = merged_df[[fid_col, 'IID', best_threshold]].copy()
-    prs_for_blup.columns = ['FID', 'IID', 'PRS']
-    prs_for_blup['PRS'] = zscore(prs_for_blup['PRS'])
+    pgs_for_blup = merged_df[[fid_col, 'IID', best_threshold]].copy()
+    pgs_for_blup.columns = ['FID', 'IID', 'PGS']
+    pgs_for_blup['PGS'] = zscore(pgs_for_blup['PGS'])
 
     # Save to PLINK directory for B3 to use
-    plink_dir = Path(prs_file).parent
-    unrelated_prs_file = plink_dir / 'unrelated_prs_scores.txt'
-    prs_for_blup.to_csv(unrelated_prs_file, index=False, header=False, sep=' ')
-    report.append(f"Z-scored PRS for BLUP saved to: {unrelated_prs_file}")
-    report.append(f"  Individuals: {len(prs_for_blup)}")
-    report.append(f"  PRS mean: {prs_for_blup['PRS'].mean():.6f}, std: {prs_for_blup['PRS'].std():.6f}")
+    plink_dir = Path(pgs_file).parent
+    unrelated_pgs_file = plink_dir / 'unrelated_pgs_scores.txt'
+    pgs_for_blup.to_csv(unrelated_pgs_file, index=False, header=False, sep=' ')
+    report.append(f"Z-scored PGS for BLUP saved to: {unrelated_pgs_file}")
+    report.append(f"  Individuals: {len(pgs_for_blup)}")
+    report.append(f"  PGS mean: {pgs_for_blup['PGS'].mean():.6f}, std: {pgs_for_blup['PGS'].std():.6f}")
     report.append("")
 
-    # Get PC-corrected PRS for the selected threshold (using full data)
-    merged_df['best_PRS'] = merged_df[best_threshold]
-    pc_model_full = smf.ols(f'best_PRS ~ {pc_formula}', data=merged_df).fit()
-    prs_corrected = merged_df['best_PRS'] - pc_model_full.predict(merged_df)
+    # Get PC-corrected PGS for the selected threshold (using full data)
+    merged_df['best_PGS'] = merged_df[best_threshold]
+    pc_model_full = smf.ols(f'best_PGS ~ {pc_formula}', data=merged_df).fit()
+    pgs_corrected = merged_df['best_PGS'] - pc_model_full.predict(merged_df)
 
     # Calculate full-sample correlation for display
-    full_corr, full_pval_stat = pearsonr(prs_corrected, merged_df['Social_Score'])
+    full_corr, full_pval_stat = pearsonr(pgs_corrected, merged_df['Social_Score'])
     best_pval = float(best_threshold.split('_')[1])
 
     report.append(f"Full-sample correlation: r={full_corr:.4f}, p={full_pval_stat:.4e}")
     report.append("")
 
     # =========================================================================
-    # Figure 1: Main PRS-Social relationship plot (2 panels)
+    # Figure 1: Main PGS-Social relationship plot (2 panels)
     # =========================================================================
     fig1, axes1 = plt.subplots(1, 2, figsize=(180 * mm2inches, 70 * mm2inches), dpi=300)
 
     # Plot 1: Scatter plot for selected threshold
     ax1 = axes1[0]
-    ax1.scatter(prs_corrected, merged_df['Social_Score'], alpha=0.5, s=10, c='steelblue')
-    z = np.polyfit(prs_corrected, merged_df['Social_Score'], 1)
+    ax1.scatter(pgs_corrected, merged_df['Social_Score'], alpha=0.5, s=10, c='steelblue')
+    z = np.polyfit(pgs_corrected, merged_df['Social_Score'], 1)
     p = np.poly1d(z)
-    x_line = np.linspace(prs_corrected.min(), prs_corrected.max(), 100)
+    x_line = np.linspace(pgs_corrected.min(), pgs_corrected.max(), 100)
     ax1.plot(x_line, p(x_line), 'r-', linewidth=1.5)
-    ax1.set_xlabel('PC-corrected PRS')
+    ax1.set_xlabel('PC-corrected PGS')
     ax1.set_ylabel('Social Score')
     ax1.set_title(f'{best_threshold}\nCV r={best_avg_corr:.3f}, Full r={full_corr:.3f}')
 
@@ -248,33 +248,33 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
     plt.savefig(output_plot, dpi=300, bbox_inches='tight')
     plt.close()
 
-    report.append(f"PRS evaluation plot saved to: {output_plot}")
+    report.append(f"PGS evaluation plot saved to: {output_plot}")
 
     # =========================================================================
     # Figure 2: Detailed distribution plots
     # =========================================================================
     fig2, axes2 = plt.subplots(2, 2, figsize=(180 * mm2inches, 140 * mm2inches), dpi=300)
 
-    # Plot 2a: Distribution of raw PRS scores
+    # Plot 2a: Distribution of raw PGS scores
     ax2a = axes2[0, 0]
     ax2a.hist(merged_df[best_threshold], bins=30, color='steelblue', alpha=0.7, edgecolor='white')
-    ax2a.set_xlabel('Raw PRS')
+    ax2a.set_xlabel('Raw PGS')
     ax2a.set_ylabel('Frequency')
-    ax2a.set_title(f'Distribution of Raw PRS ({best_threshold})')
+    ax2a.set_title(f'Distribution of Raw PGS ({best_threshold})')
 
-    # Plot 2b: Distribution of PC-corrected PRS
+    # Plot 2b: Distribution of PC-corrected PGS
     ax2b = axes2[0, 1]
-    ax2b.hist(prs_corrected, bins=30, color='steelblue', alpha=0.7, edgecolor='white')
-    ax2b.set_xlabel('PC-corrected PRS')
+    ax2b.hist(pgs_corrected, bins=30, color='steelblue', alpha=0.7, edgecolor='white')
+    ax2b.set_xlabel('PC-corrected PGS')
     ax2b.set_ylabel('Frequency')
-    ax2b.set_title('Distribution of PC-corrected PRS')
+    ax2b.set_title('Distribution of PC-corrected PGS')
 
-    # Plot 2c: Distribution of z-scored PRS (for BLUP)
+    # Plot 2c: Distribution of z-scored PGS (for BLUP)
     ax2c = axes2[1, 0]
-    ax2c.hist(prs_for_blup['PRS'], bins=30, color='coral', alpha=0.7, edgecolor='white')
-    ax2c.set_xlabel('Z-scored PRS')
+    ax2c.hist(pgs_for_blup['PGS'], bins=30, color='coral', alpha=0.7, edgecolor='white')
+    ax2c.set_xlabel('Z-scored PGS')
     ax2c.set_ylabel('Frequency')
-    ax2c.set_title('Distribution of Z-scored PRS (for BLUP)')
+    ax2c.set_title('Distribution of Z-scored PGS (for BLUP)')
 
     # Plot 2d: Distribution of Social Scores
     ax2d = axes2[1, 1]
@@ -304,10 +304,10 @@ def select_prs_threshold(prs_file, phenotype_file, pca_file, output_plot, output
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Select optimal PRS threshold based on 5-fold cross-validation'
+        description='Select optimal PGS threshold based on 5-fold cross-validation'
     )
-    parser.add_argument('--prs', required=True,
-                        help='Path to PRS scores file (all_score format)')
+    parser.add_argument('--pgs', required=True,
+                        help='Path to PGS scores file (all_score format)')
     parser.add_argument('--phenotype', required=True,
                         help='Path to phenotype data with social scores')
     parser.add_argument('--pca', required=True,
@@ -329,10 +329,10 @@ def main():
     os.makedirs(figures_dir, exist_ok=True)
     os.makedirs(reports_dir, exist_ok=True)
 
-    report_file = reports_dir / 'B3_select_prs_threshold_report.txt'
+    report_file = reports_dir / 'B3_select_pgs_threshold_report.txt'
 
-    best_threshold, _ = select_prs_threshold(
-        prs_file=Path(args.prs),
+    best_threshold, _ = select_pgs_threshold(
+        pgs_file=Path(args.pgs),
         phenotype_file=Path(args.phenotype),
         pca_file=Path(args.pca),
         output_plot=Path(args.output_plot),

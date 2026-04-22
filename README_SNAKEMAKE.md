@@ -6,7 +6,7 @@ This document explains how to use the Snakemake workflow for the Brain Compensat
 
 The workflow orchestrates three main analysis phases:
 - **Phase A**: Phenotypic data preprocessing (Python + R)
-- **Phase B**: Genetic/PRS analysis (PLINK + Python)
+- **Phase B**: Genetic/PGS analysis (PLINK + Python)
 - **Phase C**: fMRI analysis (Python)
 
 ## Prerequisites
@@ -73,7 +73,7 @@ snakemake --cores 4 --use-conda \
 **Only genetic analysis (Phase B)**:
 ```bash
 snakemake --cores 4 --use-conda \
-    ../data/PLINK_anonymised/full_prs_scores.snp.blp.profile \
+    ../data/PLINK_anonymised/full_pgs_scores.snp.blp.profile \
     ../data/blup_evaluation_results.png
 ```
 
@@ -96,10 +96,10 @@ snakemake --cores 1 --use-conda preprocess_phenotypic
 2. `factor_analysis` - Run CFA on behavioural measures (R)
 3. `evaluate_social_factor` - Evaluate social factor results
 
-### Phase B: Genetic/PRS
-1. `translate_prs_to_hcp` - Map PRS to HCP subjects
-2. `select_prs_threshold` - Optimize PRS threshold
-3. `extend_prs_with_blup` - Extend with BLUP predictions
+### Phase B: Genetic/PGS
+1. `translate_pgs_to_hcp` - Map PGS to HCP subjects
+2. `select_pgs_threshold` - Optimize PGS threshold
+3. `extend_pgs_with_blup` - Extend with BLUP predictions
 4. `evaluate_blup` - Evaluate BLUP accuracy
 
 ### Phase C: fMRI Analysis

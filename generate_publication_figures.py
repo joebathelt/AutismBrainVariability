@@ -117,7 +117,7 @@ def fig_pgs_social_scatter(df, output_dir, width_mm=50, height_mm=45):
     Parameters:
     -----------
     df : DataFrame
-        Must contain 'blup_PRS_residuals_z', 'Social_Score', 'pgs_group'
+        Must contain 'blup_PGS_residuals_z', 'Social_Score', 'pgs_group'
     """
     fig, ax = plt.subplots(figsize=(width_mm * mm2inches, height_mm * mm2inches))
 
@@ -132,7 +132,7 @@ def fig_pgs_social_scatter(df, output_dir, width_mm=50, height_mm=45):
             continue
 
         ax.scatter(
-            df.loc[mask, 'blup_PRS_residuals_z'],
+            df.loc[mask, 'blup_PGS_residuals_z'],
             df.loc[mask, 'Social_Score'],
             c=PGS_COLORS.get(group, PGS_COLORS['other']),
             s=8,
@@ -142,7 +142,7 @@ def fig_pgs_social_scatter(df, output_dir, width_mm=50, height_mm=45):
         )
 
     # Add regression line
-    x = df['blup_PRS_residuals_z'].dropna()
+    x = df['blup_PGS_residuals_z'].dropna()
     y = df.loc[x.index, 'Social_Score']
 
     z = np.polyfit(x, y, 1)
@@ -181,7 +181,7 @@ def fig_pgs_distribution(df, output_dir, width_mm=50, height_mm=40):
     """
     fig, ax = plt.subplots(figsize=(width_mm * mm2inches, height_mm * mm2inches))
 
-    pgs_z = df['blup_PRS_residuals_z'].dropna()
+    pgs_z = df['blup_PGS_residuals_z'].dropna()
 
     # Count subjects in each group
     n_low = (pgs_z < -1).sum()
@@ -764,9 +764,9 @@ def main():
     print(f"  Loaded {len(df)} subjects")
 
     # Check for required columns and rename if necessary
-    if 'blup_PRS_residuals_z' not in df.columns:
+    if 'blup_PGS_residuals_z' not in df.columns:
         if 'pgs_z' in df.columns:
-            df['blup_PRS_residuals_z'] = df['pgs_z']
+            df['blup_PGS_residuals_z'] = df['pgs_z']
         else:
             print("WARNING: No PGS z-score column found")
 
