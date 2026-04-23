@@ -6,8 +6,10 @@ HCP ICA parcellation sizes to select optimal resolution for landscape analysis.
 
 Selection criteria (defined a priori, independent of PGS hypothesis):
   1. Number of communities in expected range for resting-state networks (5-8)
-  2. High partition stability (mean pairwise ARI across consensus iterations)
-  3. Adequate modularity (Q)
+  2. Highest joint score: geometric mean of mean pairwise ARI (partition
+     stability across consensus iterations) and modularity Q (partition
+     quality). Using the geometric mean requires both metrics to be high;
+     a strong score on one cannot compensate for a weak score on the other.
 
 Usage:
     python C2b_evaluate_parcellations.py --project /app
@@ -31,7 +33,7 @@ from C2_find_communities_fMRI import (
 # ==============================================================================
 
 # A priori target: canonical resting-state networks (Yeo et al., 2011)
-TARGET_COMMUNITIES = (5, 8)
+TARGET_COMMUNITIES = (6, 8)
 
 # Consensus clustering parameters
 N_ITERATIONS = 50
@@ -224,14 +226,27 @@ def plot_tuning_curves(results_df, target_range, output_file):
     print(f"\nTuning curve saved to: {output_file}")
 
 
+def compute_joint_score(mean_ari, Q):
+    """Geometric mean of ARI and Q, guarded for non-positive values.
+
+    Returns 0 when either metric is non-positive, so a parcellation cannot
+    be rewarded for strength in one dimension while failing on the other.
+    NaN inputs (e.g. ARI unavailable) propagate as NaN.
+    """
+    if np.isnan(mean_ari) or np.isnan(Q):
+        return np.nan
+    if mean_ari <= 0 or Q <= 0:
+        return 0.0
+    return float(np.sqrt(mean_ari * Q))
+
+
 def select_optimal_parcellation(results_df, target_range):
     """
     Select parcellation based on a priori criteria.
-    
+
     Priority:
-      1. Communities within target range (5-8)
-      2. Highest mean ARI among those meeting criterion 1
-      3. If tie, prefer higher Q
+      1. Communities within target range
+      2. Highest joint score = sqrt(mean_ari * Q) among those meeting (1)
     """
     # Filter to those within target range
     in_range = results_df[results_df["in_target_range"]].copy()
@@ -242,13 +257,10 @@ def select_optimal_parcellation(results_df, target_range):
         mid_target = (target_range[0] + target_range[1]) / 2
         results_df["dist_to_target"] = abs(results_df["n_communities"] - mid_target)
         best = results_df.sort_values(
-            ["dist_to_target", "mean_ari"], ascending=[True, False]
+            ["dist_to_target", "joint_score"], ascending=[True, False]
         ).iloc[0]
     else:
-        # Among those in range, pick highest ARI (break ties with Q)
-        best = in_range.sort_values(
-            ["mean_ari", "Q"], ascending=[False, False]
-        ).iloc[0]
+        best = in_range.sort_values("joint_score", ascending=False).iloc[0]
 
     return int(best["n_nodes"])
 
@@ -297,7 +309,8 @@ def main():
         "A priori selection criteria:",
         f"  Target community count: {target_range[0]}-{target_range[1]}",
         f"  (Based on canonical resting-state networks; Yeo et al., 2011)",
-        f"  Selection rule: highest ARI among parcellations meeting target",
+        f"  Selection rule: highest joint score = sqrt(mean_ARI * Q)",
+        f"                  among parcellations meeting the community-count target",
         "",
         f"Consensus parameters:",
         f"  Iterations: {N_ITERATIONS}",
@@ -335,6 +348,10 @@ def main():
     results_df = pd.DataFrame(
         [{k: r[k] for k in summary_cols} for r in all_eval_results]
     )
+    results_df["joint_score"] = [
+        compute_joint_score(row["mean_ari"], row["Q"])
+        for _, row in results_df.iterrows()
+    ]
 
     # Summary table for report
     report.append(f"\n\n{'='*80}")
@@ -342,20 +359,26 @@ def main():
     report.append(f"{'='*80}")
     report.append(
         f"\n{'Nodes':>6} | {'N comm':>6} | {'Q':>6} | {'ARI':>10} | "
-        f"{'Size CV':>7} | {'In target':>9}"
+        f"{'Joint':>6} | {'Size CV':>7} | {'In target':>9}"
     )
-    report.append("-" * 65)
+    report.append("-" * 75)
     for _, row in results_df.iterrows():
         ari_str = (
             f"{row['mean_ari']:.3f}±{row['std_ari']:.3f}"
             if not np.isnan(row["mean_ari"])
             else "       N/A"
         )
+        joint_str = (
+            f"{row['joint_score']:.3f}"
+            if not np.isnan(row["joint_score"])
+            else "  N/A"
+        )
         report.append(
             f"{int(row['n_nodes']):>6} | "
             f"{int(row['n_communities']):>6} | "
             f"{row['Q']:>6.3f} | "
             f"{ari_str:>10} | "
+            f"{joint_str:>6} | "
             f"{row['size_cv']:>7.3f} | "
             f"{'YES' if row['in_target_range'] else 'NO':>9}"
         )
@@ -374,6 +397,7 @@ def main():
     report.append(f"  Communities: {int(optimal_row['n_communities'])}")
     report.append(f"  Q: {optimal_row['Q']:.3f}")
     report.append(f"  Mean ARI: {optimal_row['mean_ari']:.3f}" if not np.isnan(optimal_row['mean_ari']) else "  Mean ARI: N/A")
+    report.append(f"  Joint score (sqrt(ARI*Q)): {optimal_row['joint_score']:.3f}" if not np.isnan(optimal_row['joint_score']) else "  Joint score: N/A")
     report.append(f"  In target range: {optimal_row['in_target_range']}")
 
     # =========================================================================
@@ -400,6 +424,12 @@ def main():
     partition_df.sort_index(inplace=True)
     partition_df.to_csv(results_dir / f"C2b_selected_partition_{optimal}Nodes.csv")
     report.append(f"Saved: C2b_selected_partition_{optimal}Nodes.csv")
+
+    # Fixed-name copy so downstream rules can consume the selection without
+    # knowing the chosen parcellation size in advance. Downstream scripts
+    # derive n_nodes from len(partition).
+    partition_df.to_csv(results_dir / "C2b_selected_partition.csv")
+    report.append(f"Saved: C2b_selected_partition.csv (n_nodes = {optimal})")
 
     # Write report
     report.append(f"\n\n{'='*80}")

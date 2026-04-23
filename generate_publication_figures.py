@@ -681,8 +681,8 @@ def fig_connectivity_matrices(project_dir, output_dir, width_mm=50, height_mm=50
 
         matrix = np.load(matrix_file)
 
-        # Load partition for reordering
-        partition_file = data_dir / 'final_partition_100Nodes.csv'
+        # Load partition for reordering (selected by C2b)
+        partition_file = project_dir / 'results' / 'C2b_selected_partition.csv'
         if partition_file.exists():
             partition_df = pd.read_csv(partition_file)
             community_order = np.argsort(partition_df['community_id'].values)
@@ -744,11 +744,12 @@ def main():
     if args.results_file:
         results_file = Path(args.results_file)
     else:
-        # Try common locations
+        # Try common locations. The stable downstream name is
+        # C4_main_network_metrics.csv (written by C3 for the C2b-selected
+        # parcellation at the main threshold).
         candidates = [
-            project_dir / 'archive' / 'results' / 'main_analysis_data.csv',
-            project_dir / 'archive' / 'results' / 'network_metrics_100nodes_0.20thresh.csv',
-            project_dir / 'results' / 'network_metrics_100nodes_0.20thresh.csv',
+            project_dir / 'results' / 'C4_main_network_metrics.csv',
+            project_dir / 'results' / 'C3_graph_theory_landscape_results.csv',
         ]
         for candidate in candidates:
             if candidate.exists():

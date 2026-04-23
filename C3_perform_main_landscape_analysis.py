@@ -1,16 +1,18 @@
 # %%
 """
 C3_perform_main_landscape_analysis.py
-Graph Theory Analysis - Testing Landscape Theory with Sensitivity Analyses
+Graph Theory Analysis - Testing Landscape Theory
 
 This script tests landscape theory predictions using network-level metrics:
 1. Modularity predicts social functioning (establishes brain-behavior relationship)
 2. High PGS individuals show more variability in modularity (compensation diversity)
 3. Global efficiency remains stable (preserved integration constraint)
 
-Includes sensitivity analyses across different network construction parameters:
-- Thresholds: 0.15, 0.20 (main), 0.25
-- Parcellations: 50, 100 (main), 200 nodes
+The parcellation resolution is fixed upstream by C2b_evaluate_communities.py
+(the most consistent / stable parcellation for resting-state community
+structure). C3 receives that partition via --partition and derives n_nodes
+from its row count. Sensitivity is assessed across edge thresholds only
+(default 0.15 / 0.20 / 0.25).
 
 Usage:
     python C3_perform_main_landscape_analysis.py \
@@ -23,9 +25,7 @@ Usage:
         --ids <path> \
         --matrices-dir <path> \
         --partition <path> \
-        --parcellations 50 100 200 \
         --thresholds 0.15 0.20 0.25 \
-        --main-nodes 100 \
         --main-threshold 0.20
 """
 
@@ -189,16 +189,10 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
             config_key = f"{n_nodes}nodes_{threshold:.2f}thresh"
             report.append(f"\nProcessing {config_key}...")
 
-            # Load partition for this parcellation
-            partition_file = Path(args.partition) if n_nodes == args.main_nodes and args.partition else \
-                project_dir / f'results/C2_final_partition_{n_nodes}Nodes.csv'
-
-            try:
-                partition_df = pd.read_csv(partition_file)
-                report.append(f"  Using partition from {partition_file.name}")
-            except FileNotFoundError:
-                partition_df = None
-                report.append(f"  Using community detection (no predefined partition)")
+            # Partition is fixed upstream by C2b
+            partition_file = Path(args.partition)
+            partition_df = pd.read_csv(partition_file)
+            report.append(f"  Using partition from {partition_file.name}")
 
             results = []
             n_subjects = len(merged_df)
@@ -633,20 +627,12 @@ def summarize_sensitivity_results(brain_behavior_results, variability_results,
     report.append(f"  Modularity variability (alt groups):  {sig_mod_var_alt}/{total_configs} configurations significant")
     report.append(f"  Efficiency variability (alt groups):  {sig_eff_var_alt}/{total_configs} configurations significant")
 
-    # Focus on main parcellation results
-    main_node_configs = [k for k in brain_behavior_results.keys() if f'{args.main_nodes}nodes' in k]
-    sig_main_bb = sum(1 for k in main_node_configs if brain_behavior_results[k]['mod_p'] < 0.05)
-
-    report.append(f"\n{args.main_nodes}-NODE PARCELLATION SPECIFIC:")
-    report.append(f"  Brain-behavior relationships: {sig_main_bb}/{len(main_node_configs)} thresholds significant")
-
     return {
         'brain_behavior_consistency': sig_brain_behavior / total_configs,
         'modularity_var_consistency': sig_mod_var / total_configs,
         'efficiency_var_consistency': sig_eff_var / total_configs,
         'modularity_var_alt_consistency': sig_mod_var_alt / total_configs,
         'efficiency_var_alt_consistency': sig_eff_var_alt / total_configs,
-        'main_node_bb_consistency': sig_main_bb / len(main_node_configs) if main_node_configs else 0
     }
 
 
@@ -792,211 +778,148 @@ def create_main_figure(all_results, brain_behavior_results, variability_results,
 
 def create_sensitivity_figure(brain_behavior_results, variability_results,
                               all_results, args, figures_dir):
-    """Create sensitivity analysis figure."""
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    """Threshold-sensitivity figure (parcellation is fixed upstream by C2b)."""
+    fig, axes = plt.subplots(2, 2, figsize=(11, 9))
 
     configs = list(brain_behavior_results.keys())
+    thresh_configs = [f"{args.main_nodes}nodes_{t:.2f}thresh" for t in args.thresholds]
+    bar_colors = ['lightblue', 'orange', 'lightpink']
 
-    # 1. Brain-behavior correlations across parcellations (at main threshold)
-    ax = axes[0, 0]
-    node_configs = args.parcellations
-    thresh_main_configs = [f"{n}nodes_{args.main_threshold:.2f}thresh" for n in node_configs]
+    def _star(p):
+        if np.isnan(p):
+            return ''
+        return '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'
 
-    rs_main = []
-    ps_main = []
-    for config in thresh_main_configs:
-        if config in brain_behavior_results:
-            rs_main.append(brain_behavior_results[config]['mod_r'])
-            ps_main.append(brain_behavior_results[config]['mod_p'])
-        else:
-            rs_main.append(np.nan)
-            ps_main.append(np.nan)
-
-    bars = ax.bar(range(len(node_configs)), rs_main,
-                  color=['skyblue', 'orange', 'lightcoral'][:len(node_configs)], alpha=0.7)
-    ax.set_xticks(range(len(node_configs)))
-    ax.set_xticklabels([f'{n} nodes' for n in node_configs])
-    ax.set_ylabel('Modularity-Social r')
-    ax.set_title(f'Brain-Behavior Correlations\nAcross Parcellations ({args.main_threshold} threshold)')
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-
-    for i, (bar, p) in enumerate(zip(bars, ps_main)):
-        if not np.isnan(p):
-            stars = '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                    stars, ha='center', va='bottom', fontweight='bold')
-
-    # 2. Brain-behavior correlations across thresholds (main nodes only)
-    ax = axes[0, 1]
-    thresh_main_node_configs = [f"{args.main_nodes}nodes_{t:.2f}thresh" for t in args.thresholds]
-
-    rs_thresh = []
-    ps_thresh = []
-    for config in thresh_main_node_configs:
-        if config in brain_behavior_results:
-            rs_thresh.append(brain_behavior_results[config]['mod_r'])
-            ps_thresh.append(brain_behavior_results[config]['mod_p'])
-        else:
-            rs_thresh.append(np.nan)
-            ps_thresh.append(np.nan)
-
-    bars = ax.bar(range(len(thresh_main_node_configs)), rs_thresh,
-                  color=['lightblue', 'orange', 'lightpink'][:len(args.thresholds)], alpha=0.7)
-    ax.set_xticks(range(len(thresh_main_node_configs)))
-    ax.set_xticklabels([f'{t:.2f}' for t in args.thresholds])
-    ax.set_ylabel('Modularity-Social r')
-    ax.set_title(f'Brain-Behavior Correlations\n{args.main_nodes}-Node Across Thresholds')
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-
-    for i, (bar, p) in enumerate(zip(bars, ps_thresh)):
-        if not np.isnan(p):
-            stars = '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
-                    stars, ha='center', va='bottom', fontweight='bold')
-            if args.thresholds[i] == args.main_threshold:
+    def _highlight_main(bars, thresholds):
+        for bar, t in zip(bars, thresholds):
+            if t == args.main_threshold:
                 bar.set_edgecolor('red')
                 bar.set_linewidth(3)
 
-    # 3. Modularity variance ratios summary
-    ax = axes[0, 2]
+    # Panel A: Brain-behavior correlation across thresholds
+    ax = axes[0, 0]
+    rs = [brain_behavior_results[c]['mod_r'] if c in brain_behavior_results else np.nan
+          for c in thresh_configs]
+    ps = [brain_behavior_results[c]['mod_p'] if c in brain_behavior_results else np.nan
+          for c in thresh_configs]
+    bars = ax.bar(range(len(args.thresholds)), rs,
+                  color=bar_colors[:len(args.thresholds)], alpha=0.7)
+    ax.set_xticks(range(len(args.thresholds)))
+    ax.set_xticklabels([f'{t:.2f}' for t in args.thresholds])
+    ax.set_xlabel('Edge threshold')
+    ax.set_ylabel('Modularity-Social r')
+    ax.set_title(f'A. Brain-Behavior ({args.main_nodes} nodes)')
+    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+    for bar, p in zip(bars, ps):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                _star(p), ha='center', va='bottom', fontweight='bold')
+    _highlight_main(bars, args.thresholds)
 
-    mod_var_ratios = []
-    mod_var_ps = []
-    config_labels = []
-
-    for config in configs:
-        if 'modularity' in variability_results[config]['metrics']:
-            mod_var_ratios.append(variability_results[config]['metrics']['modularity']['var_ratio'])
-            mod_var_ps.append(variability_results[config]['metrics']['modularity']['bootstrap_p'])
-            n_nodes = variability_results[config]['n_nodes']
-            threshold = variability_results[config]['threshold']
-            if n_nodes == args.main_nodes:
-                config_labels.append(f'{n_nodes}n\n{threshold:.2f}t')
-            else:
-                config_labels.append(f'{n_nodes}n')
-
-    bars = ax.bar(range(len(mod_var_ratios)), mod_var_ratios,
-                  color=['skyblue' if '50n' in label else 'orange' if f'{args.main_nodes}n' in label else 'lightcoral'
-                         for label in config_labels], alpha=0.7)
-
-    ax.set_xticks(range(len(config_labels)))
-    ax.set_xticklabels(config_labels, rotation=45, ha='right')
-    ax.set_ylabel('Modularity Variance Ratio\n(High vs Low PGS)')
-    ax.set_title('Modularity Variability\nAcross Configurations')
+    # Panel B: Modularity variance ratio across thresholds
+    ax = axes[0, 1]
+    ratios = [
+        variability_results[c]['metrics']['modularity']['var_ratio']
+        if c in variability_results and 'modularity' in variability_results[c]['metrics']
+        else np.nan
+        for c in thresh_configs
+    ]
+    ps = [
+        variability_results[c]['metrics']['modularity']['bootstrap_p']
+        if c in variability_results and 'modularity' in variability_results[c]['metrics']
+        else np.nan
+        for c in thresh_configs
+    ]
+    bars = ax.bar(range(len(args.thresholds)), ratios,
+                  color=bar_colors[:len(args.thresholds)], alpha=0.7)
+    ax.set_xticks(range(len(args.thresholds)))
+    ax.set_xticklabels([f'{t:.2f}' for t in args.thresholds])
+    ax.set_xlabel('Edge threshold')
+    ax.set_ylabel('Modularity variance ratio\n(High vs Low PGS)')
+    ax.set_title('B. Modularity variability')
     ax.axhline(y=1, color='black', linestyle='--', alpha=0.5)
+    for bar, ratio, p in zip(bars, ratios, ps):
+        if not np.isnan(ratio):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
+                    f'{ratio:.2f}\n{_star(p)}', ha='center', va='bottom',
+                    fontsize=8, fontweight='bold')
+    _highlight_main(bars, args.thresholds)
 
-    for i, (bar, ratio, p) in enumerate(zip(bars, mod_var_ratios, mod_var_ps)):
-        stars = '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
-                f'{ratio:.2f}\n{stars}', ha='center', va='bottom', fontsize=8, fontweight='bold')
-        if f'{args.main_nodes}n\n{args.main_threshold:.2f}t' in config_labels[i]:
-            bar.set_edgecolor('red')
-            bar.set_linewidth(3)
-
-    # 4. Efficiency variance ratios summary
+    # Panel C: Global efficiency variance ratio across thresholds
     ax = axes[1, 0]
-
-    eff_var_ratios = []
-    eff_var_ps = []
-
-    for config in configs:
-        if 'global_efficiency' in variability_results[config]['metrics']:
-            eff_var_ratios.append(variability_results[config]['metrics']['global_efficiency']['var_ratio'])
-            eff_var_ps.append(variability_results[config]['metrics']['global_efficiency']['bootstrap_p'])
-
-    bars = ax.bar(range(len(eff_var_ratios)), eff_var_ratios,
-                  color=['skyblue' if '50n' in label else 'orange' if f'{args.main_nodes}n' in label else 'lightcoral'
-                         for label in config_labels], alpha=0.7)
-
-    ax.set_xticks(range(len(config_labels)))
-    ax.set_xticklabels(config_labels, rotation=45, ha='right')
-    ax.set_ylabel('Efficiency Variance Ratio\n(High vs Low PGS)')
-    ax.set_title('Efficiency Variability\nAcross Configurations')
+    ratios = [
+        variability_results[c]['metrics']['global_efficiency']['var_ratio']
+        if c in variability_results and 'global_efficiency' in variability_results[c]['metrics']
+        else np.nan
+        for c in thresh_configs
+    ]
+    ps = [
+        variability_results[c]['metrics']['global_efficiency']['bootstrap_p']
+        if c in variability_results and 'global_efficiency' in variability_results[c]['metrics']
+        else np.nan
+        for c in thresh_configs
+    ]
+    bars = ax.bar(range(len(args.thresholds)), ratios,
+                  color=bar_colors[:len(args.thresholds)], alpha=0.7)
+    ax.set_xticks(range(len(args.thresholds)))
+    ax.set_xticklabels([f'{t:.2f}' for t in args.thresholds])
+    ax.set_xlabel('Edge threshold')
+    ax.set_ylabel('Efficiency variance ratio\n(High vs Low PGS)')
+    ax.set_title('C. Efficiency variability')
     ax.axhline(y=1, color='black', linestyle='--', alpha=0.5)
+    for bar, ratio, p in zip(bars, ratios, ps):
+        if not np.isnan(ratio):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
+                    f'{ratio:.2f}\n{_star(p)}', ha='center', va='bottom',
+                    fontsize=8, fontweight='bold')
+    _highlight_main(bars, args.thresholds)
 
-    for i, (bar, ratio, p) in enumerate(zip(bars, eff_var_ratios, eff_var_ps)):
-        stars = '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
-                f'{ratio:.2f}\n{stars}', ha='center', va='bottom', fontsize=8, fontweight='bold')
-        if f'{args.main_nodes}n\n{args.main_threshold:.2f}t' in config_labels[i]:
-            bar.set_edgecolor('red')
-            bar.set_linewidth(3)
-
-    # 5. Main analysis scatter plot
+    # Panel D: Summary text
     ax = axes[1, 1]
-    main_config_key = f"{args.main_nodes}nodes_{args.main_threshold:.2f}thresh"
-    if main_config_key in all_results:
-        main_df = all_results[main_config_key]
-        colors_groups = ['#3498db', '#f39c12', '#e74c3c']
-
-        for i, group in enumerate(['low', 'middle', 'high']):
-            group_data = main_df[main_df['pgs_group'] == group]
-            ax.scatter(group_data['modularity'], group_data['Social_Score'],
-                      alpha=0.6, color=colors_groups[i], label=f'{group.capitalize()} PGS', s=30)
-
-        z = np.polyfit(main_df['modularity'], main_df['Social_Score'], 1)
-        p = np.poly1d(z)
-        x_range = np.linspace(main_df['modularity'].min(), main_df['modularity'].max(), 100)
-        ax.plot(x_range, p(x_range), 'k-', alpha=0.8, linewidth=2)
-
-        r_main = brain_behavior_results[main_config_key]['mod_r']
-        p_main = brain_behavior_results[main_config_key]['mod_p']
-        ax.text(0.05, 0.95, f'r = {r_main:.3f}\np = {p_main:.2e}',
-               transform=ax.transAxes, fontsize=10, va='top',
-               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
-        ax.set_xlabel('Modularity')
-        ax.set_ylabel('Social Score')
-        ax.set_title(f'Main Analysis\n({args.main_nodes} nodes, {args.main_threshold} threshold)')
-        ax.legend()
-
-    # 6. Summary panel
-    ax = axes[1, 2]
     ax.axis('off')
 
     total_configs = len(configs)
-    bb_sig = sum(1 for config in configs if brain_behavior_results[config]['mod_p'] < 0.05)
-    mod_var_sig = sum(1 for config in configs
-                     if 'modularity' in variability_results[config]['metrics'] and
-                     variability_results[config]['metrics']['modularity']['bootstrap_p'] < 0.05)
-    eff_var_sig = sum(1 for config in configs
-                     if 'global_efficiency' in variability_results[config]['metrics'] and
-                     variability_results[config]['metrics']['global_efficiency']['bootstrap_p'] < 0.05)
+    bb_sig = sum(1 for c in configs if brain_behavior_results[c]['mod_p'] < 0.05)
+    mod_var_sig = sum(
+        1 for c in configs
+        if 'modularity' in variability_results[c]['metrics']
+        and variability_results[c]['metrics']['modularity']['bootstrap_p'] < 0.05
+    )
+    eff_var_sig = sum(
+        1 for c in configs
+        if 'global_efficiency' in variability_results[c]['metrics']
+        and variability_results[c]['metrics']['global_efficiency']['bootstrap_p'] < 0.05
+    )
 
     bb_consistency = bb_sig / total_configs
     mod_consistency = mod_var_sig / total_configs
     eff_consistency = eff_var_sig / total_configs
 
     if bb_consistency >= 0.6 and mod_consistency >= 0.8 and eff_consistency < 0.4:
-        interpretation = "SUPPORTED"
-        color = 'lightgreen'
+        interpretation, bg = "SUPPORTED", 'lightgreen'
     elif mod_consistency >= 0.8:
-        interpretation = "PARTIALLY SUPPORTED"
-        color = 'lightyellow'
+        interpretation, bg = "PARTIALLY SUPPORTED", 'lightyellow'
     else:
-        interpretation = "LIMITED SUPPORT"
-        color = 'lightcoral'
+        interpretation, bg = "LIMITED SUPPORT", 'lightcoral'
 
     summary_text = f"""
-SENSITIVITY SUMMARY
+THRESHOLD SENSITIVITY SUMMARY
 
-Total configurations: {total_configs}
-- {args.main_nodes}-node: {len(args.thresholds)} thresholds
-- Other parcellations: 1 threshold each
+Parcellation: {args.main_nodes} nodes (fixed by C2b)
+Thresholds tested: {len(args.thresholds)}
 
 Results consistency:
-- Brain-behavior: {bb_consistency:.0%} ({bb_sig}/{total_configs})
-- Modularity variability: {mod_consistency:.0%} ({mod_var_sig}/{total_configs})
-- Efficiency variability: {eff_consistency:.0%} ({eff_var_sig}/{total_configs})
+- Brain-behavior:           {bb_consistency:.0%} ({bb_sig}/{total_configs})
+- Modularity variability:   {mod_consistency:.0%} ({mod_var_sig}/{total_configs})
+- Efficiency variability:   {eff_consistency:.0%} ({eff_var_sig}/{total_configs})
 
 CONCLUSION: {interpretation}
 
-Red borders = Main analysis
+Red borders = main threshold ({args.main_threshold})
 """
 
     ax.text(0.05, 0.95, summary_text, transform=ax.transAxes, fontsize=9,
            verticalalignment='top',
-           bbox=dict(boxstyle='round,pad=0.5', facecolor=color, alpha=0.7))
+           bbox=dict(boxstyle='round,pad=0.5', facecolor=bg, alpha=0.7))
 
     plt.tight_layout()
 
@@ -1055,14 +978,17 @@ def save_results(all_results, brain_behavior_results, variability_results, resul
     sensitivity_summary_df.to_csv(summary_path, index=False)
     report.append(f"Saved: {summary_path.name}")
 
-    # Also save main config results with the C4 naming convention
-    main_config_keys = [k for k in all_results.keys() if 'is_main' not in k]
-    # Find the main config key
+    # Also save main config results at fixed paths consumed by C5 and
+    # generate_publication_figures. C3_graph_theory_landscape_results.csv
+    # is kept for backwards compatibility; C4_main_network_metrics.csv is the
+    # stable downstream name (independent of the C2b-selected parcellation).
     for config, result in brain_behavior_results.items():
         if result['is_main']:
-            main_results_path = results_dir / 'C3_graph_theory_landscape_results.csv'
-            all_results[config].to_csv(main_results_path, index=False)
-            report.append(f"Saved: {main_results_path.name}")
+            for name in ('C3_graph_theory_landscape_results.csv',
+                         'C4_main_network_metrics.csv'):
+                path = results_dir / name
+                all_results[config].to_csv(path, index=False)
+                report.append(f"Saved: {path.name}")
             break
 
 
@@ -1092,19 +1018,22 @@ def main():
                         help='Path to subject IDs file')
     parser.add_argument('--matrices-dir', required=True,
                         help='Path to connectivity matrices directory')
-    parser.add_argument('--partition', required=False,
-                        help='Path to community partition CSV (for main parcellation)')
-    parser.add_argument('--parcellations', nargs='+', type=int, default=[50, 100, 200],
-                        help='Parcellation sizes to analyze (default: 50 100 200)')
+    parser.add_argument('--partition', required=True,
+                        help='Path to community partition CSV (selected by C2b). '
+                             'n_nodes is derived from the number of rows.')
     parser.add_argument('--thresholds', nargs='+', type=float, default=[0.15, 0.20, 0.25],
-                        help='Thresholds for main parcellation (default: 0.15 0.20 0.25)')
-    parser.add_argument('--main-nodes', type=int, default=100,
-                        help='Main analysis parcellation (default: 100)')
+                        help='Edge thresholds for sensitivity sweep (default: 0.15 0.20 0.25)')
     parser.add_argument('--main-threshold', type=float, default=0.20,
                         help='Main analysis threshold (default: 0.20)')
     parser.add_argument('--motion-threshold', type=float, default=0.2,
                         help='Motion threshold for subject exclusion (default: 0.2)')
     args = parser.parse_args()
+
+    # Derive parcellation resolution from the C2b-selected partition
+    partition_df_for_size = pd.read_csv(args.partition)
+    n_nodes_from_partition = len(partition_df_for_size)
+    args.parcellations = [n_nodes_from_partition]
+    args.main_nodes = n_nodes_from_partition
 
     project_folder = Path(args.project)
 
@@ -1119,19 +1048,19 @@ def main():
     # Initialize report
     report = [
         "=" * 80,
-        "C4: GRAPH THEORY ANALYSIS - LANDSCAPE THEORY TEST",
+        "C3: GRAPH THEORY ANALYSIS - LANDSCAPE THEORY TEST",
         "=" * 80,
         "",
         f"Project folder: {project_folder}",
-        f"Main configuration: {args.main_nodes} nodes, {args.main_threshold} threshold",
-        f"Parcellations: {args.parcellations}",
-        f"Thresholds (for main parcellation): {args.thresholds}",
+        f"Parcellation (from C2b): {args.main_nodes} nodes",
+        f"Main threshold: {args.main_threshold}",
+        f"Threshold sensitivity sweep: {args.thresholds}",
         f"Motion threshold: {args.motion_threshold}",
         ""
     ]
 
     print("=" * 80)
-    print("C4: GRAPH THEORY ANALYSIS - LANDSCAPE THEORY TEST")
+    print("C3: GRAPH THEORY ANALYSIS - LANDSCAPE THEORY TEST")
     print("=" * 80)
 
     # Load data for all parcellations
@@ -1187,19 +1116,18 @@ def main():
     report.append(f"\nBrain-behavior consistency: {consistency_summary['brain_behavior_consistency']:.1%}")
     report.append(f"Modularity variability consistency: {consistency_summary['modularity_var_consistency']:.1%}")
     report.append(f"Efficiency variability consistency: {consistency_summary['efficiency_var_consistency']:.1%}")
-    report.append(f"{args.main_nodes}-node brain-behavior consistency: {consistency_summary['main_node_bb_consistency']:.1%}")
 
     if (consistency_summary['modularity_var_consistency'] >= 0.8 and
-        consistency_summary['main_node_bb_consistency'] >= 0.6):
+        consistency_summary['brain_behavior_consistency'] >= 0.6):
         report.append("\n*** LANDSCAPE THEORY SUPPORTED ***")
-        report.append("Strong modularity variability effects across configurations")
+        report.append("Strong modularity variability effects across thresholds")
         report.append(f"Brain-behavior relationships robust at {args.main_nodes}-node parcellation")
     elif consistency_summary['modularity_var_consistency'] >= 0.8:
         report.append("\n*** CORE LANDSCAPE THEORY SUPPORTED ***")
         report.append("Robust modularity-based compensation mechanism")
     else:
         report.append("\n*** LIMITED SUPPORT FOR LANDSCAPE THEORY ***")
-        report.append("Results may be parameter-dependent")
+        report.append("Results may be threshold-dependent")
 
     report.append("\n" + "=" * 80)
     report.append("END OF REPORT")

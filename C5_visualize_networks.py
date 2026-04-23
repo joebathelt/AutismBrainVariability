@@ -10,16 +10,18 @@ This script creates network visualizations for the brain compensation analysis:
 3. Bootstrap density plots for modularity and global efficiency
 4. Bootstrap ellipse extent plots showing network organization space
 
+Parcellation resolution is fixed upstream by C2b_evaluate_communities.py;
+n_nodes is derived from the number of rows in the partition file.
+
 Usage:
     python C5_visualize_networks.py \
         --project /path/to/project \
         --pgs data/pgs_residuals.csv \
         --social data/cfa_factor_scores_full_sample.csv \
-        --graph-metrics results/C4_network_metrics_100nodes_0.20thresh.csv \
-        --partition data/C2_final_partition_100Nodes.csv \
+        --graph-metrics results/C4_main_network_metrics.csv \
+        --partition results/C2b_selected_partition.csv \
         --ids data/subjectIDs_anonymised.txt \
-        --matrices-dir data/HCP_PTN1200/netmats \
-        --n-nodes 100
+        --matrices-dir data/HCP_PTN1200/netmats
 """
 
 import argparse
@@ -62,13 +64,15 @@ def parse_args():
     parser.add_argument("--pgs", required=True, help="PGS/PGS residuals file (from B4)")
     parser.add_argument("--social", required=True, help="Social scores file")
     parser.add_argument("--graph-metrics", required=True,
-                        help="Graph metrics CSV (from C5 sensitivity analysis)")
-    parser.add_argument("--partition", required=True, help="Community partition file")
+                        help="Main-threshold graph metrics CSV from C3 "
+                             "(default name: C4_main_network_metrics.csv)")
+    parser.add_argument("--partition", required=True,
+                        help="Community partition from C2b "
+                             "(default: C2b_selected_partition.csv). "
+                             "n_nodes is derived from the number of rows.")
     parser.add_argument("--ids", required=True, help="Subject IDs file")
     parser.add_argument("--matrices-dir", required=True,
                         help="Directory containing connectivity matrices")
-    parser.add_argument("--n-nodes", type=int, default=100,
-                        help="Number of nodes in parcellation (default: 100)")
     parser.add_argument("--n-bootstrap", type=int, default=1000,
                         help="Number of bootstrap samples (default: 1000)")
     parser.add_argument("--sample-size", type=int, default=90,
@@ -519,18 +523,21 @@ def main():
     args = parse_args()
     project_dir = Path(args.project)
 
+    # Parcellation size is inherited from the C2b-selected partition
+    n_nodes = len(pd.read_csv(args.partition))
+
     # Initialize report
     report = []
     report.append("=" * 80)
-    report.append("C6: NETWORK VISUALIZATION REPORT")
+    report.append("C5: NETWORK VISUALIZATION REPORT")
     report.append("=" * 80)
     report.append(f"\nProject directory: {project_dir}")
-    report.append(f"Number of nodes: {args.n_nodes}")
+    report.append(f"Number of nodes (from C2b partition): {n_nodes}")
     report.append(f"Number of bootstrap samples: {args.n_bootstrap}")
     report.append(f"Bootstrap sample size: {args.sample_size}")
 
     print("=" * 80)
-    print("C6: NETWORK VISUALIZATION")
+    print("C5: NETWORK VISUALIZATION")
     print("=" * 80)
 
     # Create directories
@@ -571,12 +578,12 @@ def main():
 
     # Load connectivity matrices (full correlation)
     matrices_dir = Path(args.matrices_dir)
-    matrix_file = matrices_dir / f'3T_HCP1200_MSMAll_d{args.n_nodes}_ts2/netmats1.txt'
+    matrix_file = matrices_dir / f'3T_HCP1200_MSMAll_d{n_nodes}_ts2/netmats1.txt'
     mats_df_full = pd.read_csv(matrix_file, header=None, sep=r'\s+')
 
     # Remove lower triangle for non-redundancy
-    lower_indices = np.tril_indices(args.n_nodes, k=-1)
-    linear_indices = lower_indices[0] * args.n_nodes + lower_indices[1]
+    lower_indices = np.tril_indices(n_nodes, k=-1)
+    linear_indices = lower_indices[0] * n_nodes + lower_indices[1]
     mats_df_full = mats_df_full.iloc[:, linear_indices]
     report.append(f"Connectivity matrices loaded: {mats_df_full.shape}")
 
@@ -585,7 +592,7 @@ def main():
     report.append(f"Graph metrics data: {len(graph_metrics_df)} subjects")
 
     # Create connectivity matrix and network visualizations
-    create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, args.n_nodes,
+    create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_nodes,
                                   project_dir, args.n_bootstrap, args.sample_size, report)
 
     # Create density plots

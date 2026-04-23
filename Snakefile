@@ -41,12 +41,13 @@ rule all:
         # Phase C: fMRI analysis
         f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt",
         f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
-        f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
         f"{PROJECT_DIR}/reports/C2b_evaluate_parcellations_report.txt",
         f"{RESULTS_DIR}/C2b_parcellation_evaluation.csv",
+        f"{RESULTS_DIR}/C2b_selected_partition.csv",
         f"{PROJECT_DIR}/figures/C2b_parcellation_tuning_curves.png",
         f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
         f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
+        f"{RESULTS_DIR}/C4_main_network_metrics.csv",
         f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
         f"{RESULTS_DIR}/C3b_heteroscedasticity_results.csv",
         f"{RESULTS_DIR}/C4_sensitivity_summary.csv",
@@ -332,13 +333,17 @@ rule find_fmri_communities:
 
 
 rule evaluate_parcellations:
-    """Evaluate community detection across all HCP ICA parcellation sizes"""
+    """Evaluate community detection across all HCP ICA parcellation sizes
+    and select the most consistent resolution for downstream landscape
+    analysis. The selected partition is written to a stable filename so
+    downstream rules do not need to know the chosen size in advance."""
     input:
         report=f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}"
     output:
         report=f"{PROJECT_DIR}/reports/C2b_evaluate_parcellations_report.txt",
         results=f"{RESULTS_DIR}/C2b_parcellation_evaluation.csv",
+        selected_partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
         figure=f"{PROJECT_DIR}/figures/C2b_parcellation_tuning_curves.png"
     params:
         parcellations="15 25 50 100 200 300",
@@ -358,7 +363,8 @@ rule evaluate_parcellations:
 
 
 rule main_landscape_analysis:
-    """Perform main landscape analysis with sensitivity analyses"""
+    """Main landscape analysis at the C2b-selected parcellation, with
+    threshold sensitivity."""
     input:
         pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
@@ -366,16 +372,15 @@ rule main_landscape_analysis:
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
         movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
-        partition=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv"
+        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv"
     output:
         report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
         results=f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
         summary=f"{RESULTS_DIR}/C4_sensitivity_summary.csv",
-        main_metrics=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv"
+        main_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv"
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
-        parcellations=config.get("parcellations", "50 100 200"),
         thresholds="0.15 0.20 0.25"
     conda:
         "environment.yml"
@@ -396,14 +401,13 @@ rule main_landscape_analysis:
             --ids {input.ids} \
             --matrices-dir {params.matrices_dir} \
             --partition {input.partition} \
-            --parcellations {params.parcellations} \
             --thresholds {params.thresholds} \
             --motion-threshold {params.motion_threshold} > {log} 2>&1
         """
 
 
 rule continuous_heteroscedasticity_analysis:
-    """Continuous heteroscedasticity analysis testing landscape theory"""
+    """Continuous heteroscedasticity analysis at the C2b-selected parcellation."""
     input:
         pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
@@ -411,7 +415,7 @@ rule continuous_heteroscedasticity_analysis:
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
         movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
-        partition=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
+        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
         main_report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt"
     output:
         report=f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
@@ -419,7 +423,6 @@ rule continuous_heteroscedasticity_analysis:
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
-        n_nodes=100,
         threshold=0.2
     conda:
         "environment.yml"
@@ -440,26 +443,24 @@ rule continuous_heteroscedasticity_analysis:
             --ids {input.ids} \
             --matrices-dir {params.matrices_dir} \
             --partition {input.partition} \
-            --n-nodes {params.n_nodes} \
             --threshold {params.threshold} \
             --motion-threshold {params.motion_threshold} > {log} 2>&1
         """
 
 
 rule visualize_networks:
-    """Visualize network results"""
+    """Visualize network results at the C2b-selected parcellation."""
     input:
         pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
-        graph_metrics=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv",
-        partition=f"{RESULTS_DIR}/C2_final_partition_100Nodes.csv",
+        graph_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv",
+        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
     output:
         report=f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
         ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
-        n_nodes=100,
         n_bootstrap=config.get("n_bootstrap", 1000),
         sample_size=config.get("bootstrap_sample_size", 90)
     conda:
@@ -476,7 +477,6 @@ rule visualize_networks:
             --partition {input.partition} \
             --ids {input.ids} \
             --matrices-dir {params.matrices_dir} \
-            --n-nodes {params.n_nodes} \
             --n-bootstrap {params.n_bootstrap} \
             --sample-size {params.sample_size} > {log} 2>&1
         """
@@ -485,7 +485,7 @@ rule visualize_networks:
 rule generate_publication_figures:
     """Generate standalone publication-ready SVG figures"""
     input:
-        graph_metrics=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv",
+        graph_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv",
         ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
     output:
         fig1=f"{PROJECT_DIR}/figures/publication/fig_pgs_social_scatter.svg",
@@ -500,7 +500,7 @@ rule generate_publication_figures:
         fig10=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_global_efficiency.svg",
         fig11=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_ellipse_extent.svg"
     params:
-        results_file=f"{RESULTS_DIR}/C4_network_metrics_100nodes_0.20thresh.csv"
+        results_file=f"{RESULTS_DIR}/C4_main_network_metrics.csv"
     conda:
         "environment.yml"
     log:

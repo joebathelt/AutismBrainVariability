@@ -14,6 +14,9 @@ heteroscedasticity tests rather than group comparisons:
 
 All analyses applied to both modularity (primary) and global_efficiency (comparison).
 
+Parcellation resolution is fixed upstream by C2b_evaluate_communities.py;
+n_nodes is derived from the number of rows in the partition file.
+
 Usage:
     python C3b_continuous_heteroscedasticity_analysis.py \
         --project <path> \
@@ -25,7 +28,6 @@ Usage:
         --ids <path> \
         --matrices-dir <path> \
         --partition <path> \
-        --n-nodes 100 \
         --threshold 0.2
 """
 
@@ -770,10 +772,9 @@ def main():
                         help='Path to subject IDs file')
     parser.add_argument('--matrices-dir', required=False,
                         help='Path to connectivity matrices directory')
-    parser.add_argument('--partition', required=False,
-                        help='Path to community partition CSV')
-    parser.add_argument('--n-nodes', type=int, default=100,
-                        help='Number of nodes in parcellation (default: 100)')
+    parser.add_argument('--partition', required=True,
+                        help='Path to community partition CSV (from C2b). '
+                             'n_nodes is derived from the number of rows.')
     parser.add_argument('--threshold', type=float, default=0.2,
                         help='Network density threshold (default: 0.2)')
     parser.add_argument('--motion-threshold', type=float, default=0.2,
@@ -814,11 +815,13 @@ def main():
                else project_folder / 'data/subjectIDs_anonymised.txt')
     matrices_dir = (Path(args.matrices_dir) if args.matrices_dir
                     else project_folder / 'data/HCP_PTN1200/netmats')
-    partition_file = (Path(args.partition) if args.partition
-                      else project_folder / f'results/C2_final_partition_{args.n_nodes}Nodes.csv')
+    partition_file = Path(args.partition)
+
+    # Parcellation size is inherited from the C2b-selected partition
+    n_nodes = len(pd.read_csv(partition_file))
 
     report.append(f"Project folder: {project_folder}")
-    report.append(f"N nodes: {args.n_nodes}")
+    report.append(f"N nodes (from C2b partition): {n_nodes}")
     report.append(f"Network threshold: {args.threshold}")
     report.append(f"Motion threshold: {args.motion_threshold}")
     report.append("")
@@ -827,12 +830,12 @@ def main():
     merged_df = load_and_prepare_data(
         project_folder, pgs_file, social_file, behavioural_file,
         phenotypic_file, movement_file, id_file, matrices_dir,
-        args.n_nodes, args.motion_threshold, report
+        n_nodes, args.motion_threshold, report
     )
 
     # Calculate network metrics
     network_df = calculate_network_metrics(
-        merged_df, partition_file, args.n_nodes, args.threshold, report
+        merged_df, partition_file, n_nodes, args.threshold, report
     )
 
     # Run heteroscedasticity analyses (on full sample)
