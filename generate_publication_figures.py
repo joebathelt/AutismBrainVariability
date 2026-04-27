@@ -27,10 +27,12 @@ Output:
 """
 
 import argparse
+import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 from matplotlib.patches import Ellipse
 from matplotlib import rcParams
 import seaborn as sns
@@ -110,7 +112,7 @@ def setup_output_dir(project_dir):
 # FIGURE 1: PGS vs Social Score Association
 # =============================================================================
 
-def fig_pgs_social_scatter(df, output_dir, width_mm=50, height_mm=45):
+def fig_pgs_social_scatter(df, output_dir, width_mm=55, height_mm=45):
     """
     Create scatter plot of PGS vs Social Score with regression line.
 
@@ -175,7 +177,7 @@ def fig_pgs_social_scatter(df, output_dir, width_mm=50, height_mm=45):
 # FIGURE 2: PGS Distribution with Group Shading
 # =============================================================================
 
-def fig_pgs_distribution(df, output_dir, width_mm=50, height_mm=40):
+def fig_pgs_distribution(df, output_dir, width_mm=55, height_mm=40):
     """
     Create histogram of PGS distribution with group shading.
     """
@@ -215,7 +217,7 @@ def fig_pgs_distribution(df, output_dir, width_mm=50, height_mm=40):
 # FIGURE 3: PGS Group Comparison Boxplot
 # =============================================================================
 
-def fig_pgs_group_boxplot(df, output_dir, width_mm=45, height_mm=40):
+def fig_pgs_group_boxplot(df, output_dir, width_mm=55, height_mm=40):
     """
     Create boxplot with swarm overlay comparing Social Scores across PGS groups.
     """
@@ -291,7 +293,7 @@ def fig_modularity_social_scatter(df, output_dir, width_mm=50, height_mm=45):
             transform=ax.transAxes, fontsize=8, va='top',
             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='none'))
 
-    ax.set_xlabel('Modularity')
+    ax.set_xlabel('Q (res)')
     ax.set_ylabel('SDS [z]')
     ax.legend(loc='lower right', frameon=True, framealpha=0.9, fontsize=7)
 
@@ -347,7 +349,7 @@ def fig_modularity_variability_bar(df, output_dir, width_mm=45, height_mm=40):
             bbox=dict(boxstyle='round', facecolor='yellow' if levene_p < 0.05 else 'white',
                      alpha=0.8, edgecolor='none'))
 
-    ax.set_ylabel('Modularity SD')
+    ax.set_ylabel('Q SD (res)')
     ax.set_xlabel('PGS Group')
 
     sns.despine(offset=5)
@@ -401,7 +403,7 @@ def fig_efficiency_variability_bar(df, output_dir, width_mm=45, height_mm=40):
             transform=ax.transAxes, fontsize=7, ha='right', va='top',
             bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8, edgecolor='none'))
 
-    ax.set_ylabel('Global Efficiency SD')
+    ax.set_ylabel('E SD (res)')
     ax.set_xlabel('PGS Group')
 
     sns.despine(offset=5)
@@ -437,8 +439,8 @@ def fig_network_organization_space(df, output_dir, width_mm=50, height_mm=45):
             edgecolors='none'
         )
 
-    ax.set_xlabel('Global Efficiency')
-    ax.set_ylabel('Modularity')
+    ax.set_xlabel('E (res)')
+    ax.set_ylabel('Q (res)')
     ax.legend(loc='upper right', frameon=True, framealpha=0.9, fontsize=7)
 
     sns.despine(offset=5)
@@ -487,7 +489,7 @@ def fig_compensation_strategies(df, output_dir, width_mm=50, height_mm=45):
                      facecolor='lightgreen' if p_val > 0.05 else 'white',
                      alpha=0.8, edgecolor='none'))
 
-    ax.set_xlabel('Global Efficiency')
+    ax.set_xlabel('E (res)')
     ax.set_ylabel('SDS [z]')
     ax.legend(loc='lower right', frameon=True, framealpha=0.9, fontsize=7,
               title='High PGS:', title_fontsize=7)
@@ -507,54 +509,50 @@ def fig_compensation_strategies(df, output_dir, width_mm=50, height_mm=45):
 def fig_bootstrap_density(df, measure, output_dir, width_mm=55, height_mm=42,
                           n_bootstrap=1000, sample_size=90):
     """
-    Create bootstrap density plot with boxplot overlay for a given measure.
+    Bootstrap density of mean absolute deviation from each PGS group's mean —
+    visualises the spread that Levene's test compares across groups.
     """
     fig, ax = plt.subplots(figsize=(width_mm * mm2inches, height_mm * mm2inches))
 
     plot_df = df[df['pgs_group'].isin(['low', 'middle', 'high'])].copy()
-
-    # Z-score the measure across all groups
-    all_data = plot_df[measure].values
-    mean_all = np.mean(all_data)
-    std_all = np.std(all_data, ddof=1)
 
     positions = [0, 1.2, 2.4]
     colors = [PGS_COLORS['low'], PGS_COLORS['middle'], PGS_COLORS['high']]
 
     for i, (group, pos, color) in enumerate(zip(['low', 'middle', 'high'], positions, colors)):
         data = plot_df[plot_df['pgs_group'] == group][measure].values
-        data_z = (data - mean_all) / std_all
+        dev = np.abs(data - data.mean())
 
-        # Generate bootstrap samples
-        bootstrap_means = []
+        bootstrap_mads = []
         for _ in range(n_bootstrap):
-            sample = np.random.choice(data_z, size=min(sample_size, len(data_z)), replace=True)
-            bootstrap_means.append(np.mean(sample))
+            sample = np.random.choice(dev, size=min(sample_size, len(dev)), replace=True)
+            bootstrap_mads.append(np.mean(sample))
 
-        bootstrap_means = np.array(bootstrap_means)
+        bootstrap_mads = np.array(bootstrap_mads)
 
-        # Kernel density estimation
-        density = stats.gaussian_kde(bootstrap_means)
-        xs = np.linspace(bootstrap_means.min(), bootstrap_means.max(), 200)
+        density = stats.gaussian_kde(bootstrap_mads)
+        xs = np.linspace(bootstrap_mads.min(), bootstrap_mads.max(), 200)
         density_curve = density(xs)
         density_curve = density_curve / density_curve.max() * 0.4
 
-        # Plot density
         ax.fill_betweenx(xs, pos - density_curve, pos, alpha=0.6, color=color)
 
-        # Add boxplot
-        ax.boxplot([bootstrap_means], positions=[pos + 0.2], widths=0.1,
+        ax.boxplot([bootstrap_mads], positions=[pos + 0.2], widths=0.1,
                    patch_artist=True,
                    boxprops=dict(facecolor=color, alpha=0.7),
                    medianprops=dict(color='black', linewidth=1.5),
                    showfliers=False)
 
+    if measure == 'modularity':
+        label = 'Q'
+    elif measure == 'global_efficiency':
+        label = 'E'
+
     ax.set_xlim(-0.5, 3.0)
     ax.set_xticks(positions)
     ax.set_xticklabels(['Low', 'Middle', 'High'])
-    ax.set_ylabel(f'{measure.replace("_", " ").title()} [z]')
+    ax.set_ylabel(f'Mean |{label} − μ|')
     ax.set_xlabel('PGS Group')
-    ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5, linewidth=0.8)
     ax.grid(True, alpha=0.2, axis='y', linewidth=0.5)
 
     sns.despine(offset=5, trim=True)
@@ -570,7 +568,7 @@ def fig_bootstrap_density(df, measure, output_dir, width_mm=55, height_mm=42,
 # FIGURE 11: Bootstrap Ellipse Extent Plot
 # =============================================================================
 
-def fig_bootstrap_ellipse_extent(df, output_dir, width_mm=55, height_mm=45,
+def fig_bootstrap_ellipse_extent(df, output_dir, width_mm=120, height_mm=75,
                                   n_bootstrap=1000, sample_size=90):
     """
     Create plot showing bootstrapped confidence ellipses for each PGS group.
@@ -624,33 +622,48 @@ def fig_bootstrap_ellipse_extent(df, output_dir, width_mm=55, height_mm=45,
         centers_y = [p['center'][1] for p in ellipse_params]
         angles = [p['angle'] for p in ellipse_params]
 
-        width_97 = np.percentile(widths, 97.5)
-        height_97 = np.percentile(heights, 97.5)
+        width_med = np.median(widths)
+        height_med = np.median(heights)
         center_x_med = np.median(centers_x)
         center_y_med = np.median(centers_y)
         angle_med = np.median(angles)
 
-        # Draw confidence ellipse
+        cx_lo, cx_hi = np.percentile(centers_x, [2.5, 97.5])
+        cy_lo, cy_hi = np.percentile(centers_y, [2.5, 97.5])
+
+        # Draw confidence ellipse with subtle Venn-style shading
         ellipse = Ellipse(
             xy=(center_x_med, center_y_med),
-            width=width_97,
-            height=height_97,
+            width=width_med,
+            height=height_med,
             angle=angle_med,
-            facecolor='none',
-            edgecolor=colors[i],
+            facecolor=mcolors.to_rgba(colors[i], 0.18),
+            edgecolor=mcolors.to_rgba(colors[i], 0.9),
             linewidth=2,
             linestyle='-',
-            alpha=0.8
         )
         ax.add_patch(ellipse)
+
+        # 95% CI crosshair on the ellipse centroid
+        ax.plot([cx_lo, cx_hi], [center_y_med, center_y_med],
+                color='black', linewidth=1, alpha=0.9, zorder=10)
+        ax.plot([center_x_med, center_x_med], [cy_lo, cy_hi],
+                color='black', linewidth=1, alpha=0.9, zorder=10)
 
         # Add centroid marker
         ax.scatter(center_x_med, center_y_med, marker='o', s=80, alpha=0.7,
                    color=colors[i], edgecolors='black', linewidth=0.5,
-                   zorder=10, label=group.capitalize())
+                   zorder=9, label=group.capitalize())
 
-    ax.set_xlabel('Modularity')
-    ax.set_ylabel('Global Efficiency')
+        # Rug plots: per-subject ticks colour-coded by group
+        sns.rugplot(x=mod_data, ax=ax, color=colors[i], height=0.03,
+                    alpha=0.6, linewidth=0.6)
+        sns.rugplot(y=eff_data, ax=ax, color=colors[i], height=0.03,
+                    alpha=0.6, linewidth=0.6)
+
+    ax.set_xlabel('Q (res)')
+    ax.set_ylabel('E (res)')
+    ax.set_ylim([-0.075, 0.051])
     ax.legend(loc='upper right', frameon=True, framealpha=0.9, fontsize=7)
     ax.set_aspect('equal', adjustable='datalim')
 
@@ -712,6 +725,261 @@ def fig_connectivity_matrices(project_dir, output_dir, width_mm=50, height_mm=50
                     bbox_inches='tight', pad_inches=0.05)
         plt.close(fig)
         print(f"  Saved: fig_connectivity_matrix_{group}.svg")
+
+
+# =============================================================================
+# FIGURE 13: CONSORT-style Subject Retention Diagram (TikZ snippet)
+# =============================================================================
+
+def _parse_consort_counts(project_dir):
+    """Parse subject-retention counts from pipeline report files.
+
+    Reads A1, B1, B5 and C1 reports and returns the counts needed to
+    populate the CONSORT diagram boxes. Raises a clear RuntimeError if a
+    file is missing or a value cannot be located.
+    """
+    reports_dir = project_dir / 'reports'
+    a1_path = reports_dir / 'A1_preprocess_phenotypic_data_report.txt'
+    b1_path = reports_dir / 'B1_plinkQC_genotype_qc_report.txt'
+    b5_path = reports_dir / 'B5_evaluate_blup_prediction_report.txt'
+    c1_path = reports_dir / 'C1_run_univariate_fMRI_prediction_report.txt'
+
+    for p in (a1_path, b1_path, b5_path, c1_path):
+        if not p.exists():
+            raise RuntimeError(f"CONSORT: report file not found: {p}")
+
+    a1_text = a1_path.read_text()
+    b1_text = b1_path.read_text()
+    b5_text = b5_path.read_text()
+    c1_text = c1_path.read_text()
+
+    def grab_int(pattern, text, source):
+        m = re.search(pattern, text)
+        if m is None:
+            raise RuntimeError(
+                f"CONSORT: could not parse {pattern!r} from {source}")
+        return int(m.group(1))
+
+    def grab_float(pattern, text, source):
+        m = re.search(pattern, text)
+        if m is None:
+            raise RuntimeError(
+                f"CONSORT: could not parse {pattern!r} from {source}")
+        return float(m.group(1))
+
+    original = grab_int(
+        r'Behavioural data shape: \((\d+),', a1_text, a1_path)
+
+    plinkqc_failed = grab_int(
+        r'Total unique individuals failing:\s*(\d+)', b1_text, b1_path)
+    plinkqc_final = grab_int(
+        r'FINAL CLEANED DATA:[^\n]*\n[^\n]*\n\s*Individuals:\s*(\d+)',
+        b1_text, b1_path)
+    after_genetic = plinkqc_final
+    excl_genetic_total = original - after_genetic
+    excl_failed_qc = plinkqc_failed
+    excl_no_genetics = max(0, excl_genetic_total - excl_failed_qc)
+
+    # Per-category plinkQC fails — read line counts directly from the
+    # plinkQC_output/*.fail-*.IDs files. Sub-counts may overlap (a
+    # subject can fail more than one criterion); the unique total is
+    # ``excl_failed_qc`` parsed above.
+    name_match = re.search(r'Input data:\s+(\S+)', b1_text)
+    if name_match is None:
+        raise RuntimeError(
+            f"CONSORT: could not parse 'Input data:' from {b1_path}")
+    plink_name = name_match.group(1)
+    plinkqc_dir = project_dir / 'data' / 'plinkQC_output'
+    if not plinkqc_dir.exists():
+        raise RuntimeError(
+            f"CONSORT: plinkQC output dir not found: {plinkqc_dir}")
+
+    def count_fail(suffix):
+        fpath = plinkqc_dir / f"{plink_name}.fail-{suffix}.IDs"
+        if not fpath.exists():
+            return 0
+        return sum(1 for line in fpath.open() if line.strip())
+
+    fail_sex = count_fail('sexcheck')
+    fail_het = count_fail('het')
+    fail_relatedness = count_fail('IBD')
+    fail_imiss = count_fail('imiss')
+    fail_ancestry = count_fail('ancestry')
+    ancestry_skipped = bool(
+        re.search(r'ANCESTRY CHECK:\s*\n\s*SKIPPED', b1_text))
+
+    after_behaviour = grab_int(
+        r'Full sample merged data shape: \((\d+),', b5_text, b5_path)
+    excl_behaviour = after_genetic - after_behaviour
+
+    after_fmri = grab_int(
+        r'Final sample size: (\d+) subjects', c1_text, c1_path)
+    excl_fmri_total = after_behaviour - after_fmri
+    motion_threshold = grab_float(
+        r'Motion threshold:\s*([\d.]+)', c1_text, c1_path)
+
+    pgs_low = grab_int(
+        r'Low PGS \(<-1 SD\):\s*(\d+)', c1_text, c1_path)
+    pgs_middle = grab_int(
+        r'Middle PGS \(>-0\.5 SD & <0\.5 SD\):\s*(\d+)', c1_text, c1_path)
+    pgs_high = grab_int(
+        r'High PGS \(>\+1 SD\):\s*(\d+)', c1_text, c1_path)
+    pgs_other = after_fmri - pgs_low - pgs_middle - pgs_high
+
+    return {
+        'original': original,
+        'excl_no_genetics': excl_no_genetics,
+        'excl_failed_qc': excl_failed_qc,
+        'excl_genetic_total': excl_genetic_total,
+        'fail_sex': fail_sex,
+        'fail_het': fail_het,
+        'fail_relatedness': fail_relatedness,
+        'fail_imiss': fail_imiss,
+        'fail_ancestry': fail_ancestry,
+        'ancestry_skipped': ancestry_skipped,
+        'after_genetic': after_genetic,
+        'excl_behaviour': excl_behaviour,
+        'after_behaviour': after_behaviour,
+        'excl_fmri_total': excl_fmri_total,
+        'motion_threshold': motion_threshold,
+        'after_fmri': after_fmri,
+        'pgs_low': pgs_low,
+        'pgs_middle': pgs_middle,
+        'pgs_high': pgs_high,
+        'pgs_other': pgs_other,
+    }
+
+
+def fig_consort_diagram(project_dir, output_dir, include_behaviour_step=True):
+    """Generate a TikZ snippet for the CONSORT subject-retention diagram.
+
+    Writes ``fig_consort_diagram.tex`` containing a single ``tikzpicture``
+    environment. The snippet expects the parent document to define a ``\\h``
+    indentation macro (see the manuscript preamble).
+
+    Each exclusion box sits in the same matrix row as the step it is
+    being excluded *from* (matching the user's hand-drawn template).
+    """
+    counts = _parse_consort_counts(project_dir)
+
+    def fmt(x):
+        return f"{x:,}"
+
+    rows = []
+
+    qc_breakdown_lines = [
+        f"        \\h No genetics: n={fmt(counts['excl_no_genetics'])} \\\\",
+        f"        \\h Failed sex check: n={fmt(counts['fail_sex'])} \\\\",
+        f"        \\h Failed het/missingness: n={fmt(counts['fail_het'])} \\\\",
+        f"        \\h Failed relatedness: n={fmt(counts['fail_relatedness'])} \\\\",
+    ]
+    if counts['ancestry_skipped']:
+        qc_breakdown_lines.append(
+            "        \\h Ancestry check: not run")
+    else:
+        qc_breakdown_lines.append(
+            f"        \\h Failed ancestry: n={fmt(counts['fail_ancestry'])}")
+
+    rows.append(
+        f"      \\node [block_center] (start) {{Original: n={fmt(counts['original'])}}}; &\n"
+        f"      \\node [block_left] (excluded1) {{Missing data: n={fmt(counts['excl_genetic_total'])} \\\\\n"
+        + "\n".join(qc_breakdown_lines) + "\n"
+        "      }; \\\\"
+    )
+
+    if include_behaviour_step and counts['excl_behaviour'] > 0:
+        rows.append(
+            f"      \\node [block_center] (step1) {{Genetic: n={fmt(counts['after_genetic'])}}}; &\n"
+            f"      \\node [block_left] (excluded2) {{Missing behaviour: n={fmt(counts['excl_behaviour'])}}}; \\\\"
+        )
+        before_fmri_row = (
+            f"      \\node [block_center] (step2) "
+            f"{{Behaviour: n={fmt(counts['after_behaviour'])}}}; &\n"
+            f"      \\node [block_left] (excluded3) {{fMRI exclusion: n={fmt(counts['excl_fmri_total'])} \\\\\n"
+            f"        \\h Motion threshold: {counts['motion_threshold']:g} (rel. RMS)\n"
+            "      }; \\\\"
+        )
+        extra_paths = [
+            "      \\path (step1) -- (excluded2);",
+            "      \\path (step1) -- (step2);",
+            "      \\path (step2) -- (excluded3);",
+            "      \\path (step2) -- (step3);",
+        ]
+    elif include_behaviour_step:
+        rows.append(
+            f"      \\node [block_center] (step1) {{Genetic: n={fmt(counts['after_genetic'])}}}; \\\\"
+        )
+        before_fmri_row = (
+            f"      \\node [block_center] (step2) "
+            f"{{Behaviour: n={fmt(counts['after_behaviour'])}\\\\"
+            "(missing values imputed via MICE)}; &\n"
+            f"      \\node [block_left] (excluded3) {{fMRI exclusion: n={fmt(counts['excl_fmri_total'])} \\\\\n"
+            f"        \\h Motion threshold: {counts['motion_threshold']:g} (rel. RMS)\n"
+            "      }; \\\\"
+        )
+        extra_paths = [
+            "      \\path (step1) -- (step2);",
+            "      \\path (step2) -- (excluded3);",
+            "      \\path (step2) -- (step3);",
+        ]
+    else:
+        before_fmri_row = (
+            f"      \\node [block_center] (step1) {{Genetic: n={fmt(counts['after_genetic'])}}}; &\n"
+            f"      \\node [block_left] (excluded3) {{fMRI exclusion: n={fmt(counts['excl_fmri_total'])} \\\\\n"
+            f"        \\h Motion threshold: {counts['motion_threshold']:g} (rel. RMS)\n"
+            "      }; \\\\"
+        )
+        extra_paths = [
+            "      \\path (step1) -- (excluded3);",
+            "      \\path (step1) -- (step3);",
+        ]
+
+    rows.append(before_fmri_row)
+    rows.append(
+        f"      \\node [block_center] (step3) {{rs-fMRI: n={fmt(counts['after_fmri'])}}}; \\\\"
+    )
+    rows.append(
+        "      \\node [block_large] (step4) {PGS groups:\\\\\n"
+        f"      \\h Low PGS (\\textless -1 SD): n={fmt(counts['pgs_low'])}\\\\\n"
+        f"      \\h Middle PGS (±0.5 SD): n={fmt(counts['pgs_middle'])}\\\\\n"
+        f"      \\h High PGS (\\textgreater +1 SD): n={fmt(counts['pgs_high'])}\\\\\n"
+        f"      \\h Other: n={fmt(counts['pgs_other'])}}}; \\\\"
+    )
+
+    paths = [
+        "      \\path (start) -- (excluded1);",
+        "      \\path (start) -- (step1);",
+        *extra_paths,
+        "      \\path (step3) -- (step4);",
+    ]
+
+    snippet = (
+        "% CONSORT subject-retention diagram (auto-generated by\n"
+        "% generate_publication_figures.py:fig_consort_diagram).\n"
+        "% Parent document must define \\h (indentation macro), e.g.:\n"
+        "%   \\newcommand*{\\h}{\\hspace{5pt}}\n"
+        "\\begin{tikzpicture}[\n"
+        "    auto,\n"
+        "    block_center/.style ={rectangle, draw=black, thick, fill=white,\n"
+        "      text width=12em, align=center, minimum height=4em},\n"
+        "    block_left/.style ={rectangle, draw=black, thick, fill=white,\n"
+        "      text width=16em, align=left, minimum height=4em, inner sep=6pt},\n"
+        "    block_large/.style ={rectangle, draw=black, thick, fill=white,\n"
+        "      text width=16em, align=left, minimum height=4em, inner sep=6pt},\n"
+        "    line/.style ={draw, -Latex, thick, shorten >=0pt},\n"
+        "  ]\n"
+        "    \\matrix [column sep=5mm,row sep=3mm] {\n"
+        + "\n".join(rows) + "\n"
+        "    };\n"
+        "    \\begin{scope}[every path/.style=line]\n"
+        + "\n".join(paths) + "\n"
+        "    \\end{scope}\n"
+        "  \\end{tikzpicture}\n"
+    )
+
+    output_path = output_dir / 'fig_consort_diagram.tex'
+    output_path.write_text(snippet)
+    print(f"  Saved: {output_path.name}")
 
 
 # =============================================================================
@@ -794,6 +1062,10 @@ def main():
     fig_bootstrap_density(df, 'global_efficiency', output_dir)
     fig_bootstrap_ellipse_extent(df, output_dir)
     fig_connectivity_matrices(project_dir, output_dir)
+
+    # CONSORT subject-retention diagram (LaTeX/TikZ snippet)
+    print("\n--- CONSORT Diagram ---")
+    fig_consort_diagram(project_dir, output_dir)
 
     print("\n" + "=" * 60)
     print("FIGURE GENERATION COMPLETE")

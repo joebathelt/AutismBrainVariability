@@ -45,6 +45,8 @@ from statsmodels.nonparametric.smoothers_lowess import lowess
 import networkx as nx
 import bct
 
+from utils.covariates import COVARIATES, regress_out_covariates
+
 # Set up plotting
 plt.style.use('default')
 sns.set_palette("husl")
@@ -181,12 +183,31 @@ def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold, rep
             'global_efficiency': global_efficiency,
             'Social_Score': row['Social_Score'],
             'pgs_group': row['pgs_group'],
-            'pgs_z': row['pgs_z']
+            'pgs_z': row['pgs_z'],
+            'Age_in_Yrs': row['Age_in_Yrs'],
+            'Gender': row['Gender'],
+            'FS_IntraCranial_Vol': row['FS_IntraCranial_Vol'],
+            'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
         })
 
     report.append(f"Computed metrics for {len(results)} subjects")
 
-    return pd.DataFrame(results)
+    network_df = pd.DataFrame(results)
+
+    # Residualise brain metrics for age, sex, ICV, and head motion so the
+    # heteroscedasticity tests reflect PGS-related variance beyond demographic
+    # and motion confounds. Matches C1's covariate handling; keep raw values
+    # under *_raw for audit.
+    network_df['modularity_raw'] = network_df['modularity']
+    network_df['global_efficiency_raw'] = network_df['global_efficiency']
+    network_df[['modularity', 'global_efficiency']] = regress_out_covariates(
+        network_df[['modularity', 'global_efficiency']],
+        network_df[list(COVARIATES)],
+    )
+    report.append(f"Residualised modularity & global_efficiency for: "
+                  f"{', '.join(COVARIATES)}")
+
+    return network_df
 
 
 # %%
@@ -598,7 +619,8 @@ def create_main_figure(df, bp_results, white_results, qr_results,
     fig, axes = plt.subplots(4, 2, figsize=(280 * mm2inches, 320 * mm2inches), dpi=FIGURE_DPI)
 
     metrics = ['modularity', 'global_efficiency']
-    metric_labels = ['Modularity', 'Global Efficiency']
+    metric_labels = ['Modularity (residualised)',
+                     'Global Efficiency (residualised)']
 
     for col, (metric, label) in enumerate(zip(metrics, metric_labels)):
 
@@ -824,6 +846,8 @@ def main():
     report.append(f"N nodes (from C2b partition): {n_nodes}")
     report.append(f"Network threshold: {args.threshold}")
     report.append(f"Motion threshold: {args.motion_threshold}")
+    report.append(f"Brain metrics residualised for: {', '.join(COVARIATES)}")
+    report.append("  (applied before all heteroscedasticity tests)")
     report.append("")
 
     # Load data

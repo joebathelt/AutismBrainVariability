@@ -455,8 +455,7 @@ run_ancestry_check <- function() {
     path2load_mat = load_mat,
     plink2format  = FALSE,    # input is plink1 .bed/.bim/.fam
     var_format    = FALSE,    # variant IDs are rsIDs, not chr:pos[hg38]
-    excludeAncestry = NULL,
-    interactive   = FALSE,
+    excludeAncestry = c("AFR", "AMR", "EAS", "SAS"), # only keep EUR
     verbose       = TRUE,
     showPlinkOutput = TRUE
   )

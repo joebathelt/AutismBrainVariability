@@ -54,6 +54,16 @@ rcParams.update({
 mm2inches = 0.0393701
 FIGURE_DPI = 300
 
+# Node colors based on community
+NODE_COLOUR_DICT = {
+    0: '#7B2D8E',  # Visual Network (deeper purple)
+    1: '#C85450',  # DMN (warmer red)
+    2: '#A8B8C8',  # Other (softer blue-gray)
+    3: '#D17A47',  # FPN (warmer orange)
+    4: '#2DB574',  # VAN (balanced green)
+    5: '#4FB3D9'   # Other (warmer cyan)
+}
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -117,16 +127,6 @@ def create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_node
 
     figures_dir = project_dir / 'figures'
     data_dir = project_dir / 'data'
-
-    # Node colors based on community
-    node_colour_dict = {
-        0: '#7B2D8E',  # Visual Network (deeper purple)
-        1: '#C85450',  # DMN (warmer red)
-        2: '#A8B8C8',  # Other (softer blue-gray)
-        3: '#D17A47',  # FPN (warmer orange)
-        4: '#2DB574',  # VAN (balanced green)
-        5: '#4FB3D9'   # Other (warmer cyan)
-    }
 
     for group in ['low', 'middle', 'high']:
         report.append(f"\nProcessing group: {group}")
@@ -216,7 +216,7 @@ def create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_node
 
         # Create network visualization
         node_colours = partition_df['community_id'].values
-        node_colours = np.array([node_colour_dict.get(comm, '#888888') for comm in node_colours])
+        node_colours = np.array([NODE_COLOUR_DICT.get(comm, '#888888') for comm in node_colours])
 
         final_avg_matrix_thresholded = bct.threshold_proportional(final_avg_matrix.copy(), 0.05, copy=False)
         G = nx.from_numpy_array(final_avg_matrix_thresholded)
@@ -244,6 +244,131 @@ def create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_node
         plt.savefig(network_fig_path, dpi=FIGURE_DPI, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         report.append(f'  Saved network figure: {network_fig_path.name}')
+
+
+def create_exemplar_networks(pgs_df, mats_df_full, ids, partition_df, n_nodes,
+                              project_dir, report,
+                              n_exemplars=4, n_quartiles=4,
+                              modularity_threshold=0.2, viz_threshold=0.05,
+                              seed=42):
+    """Per PGS group, sample n_exemplars subjects from each within-group modularity
+    quartile and draw an individual spring-layout network for each.
+
+    Modularity is computed per subject from the raw correlation matrix at
+    `modularity_threshold` (matches C3's main-threshold pipeline). The spring-layout
+    visualisation uses `viz_threshold` (matches the bootstrap network panels).
+    Saves one PNG per exemplar plus an index CSV.
+    """
+    report.append("\n" + "=" * 80)
+    report.append("EXEMPLAR NETWORK VISUALIZATIONS (per PGS group x modularity quartile)")
+    report.append("=" * 80)
+
+    figures_dir = project_dir / 'figures'
+    results_dir = project_dir / 'results'
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    node_colours = partition_df['community_id'].values
+    node_colours = np.array([NODE_COLOUR_DICT.get(comm, '#888888') for comm in node_colours])
+    community_ids = partition_df['community_id'].values
+
+    # Compute per-subject modularity at the analysis threshold so quartile
+    # assignment matches the rest of the pipeline.
+    mod_records = []
+    for subject in pgs_df['Subject'].values:
+        subj_idx = np.where(ids == subject)[0]
+        if len(subj_idx) == 0:
+            continue
+        subj_idx = subj_idx[0]
+        row = mats_df_full.iloc[subj_idx, :].values / 100
+        mat = vec_to_sym_matrix(row, diagonal=np.zeros(n_nodes))
+        mat_t = bct.threshold_proportional(mat, modularity_threshold)
+        mat_t = np.nan_to_num(mat_t, nan=0.0)
+        try:
+            _, modularity = bct.modularity_und_sign(mat_t, community_ids)
+        except Exception:
+            modularity = np.nan
+        if np.isnan(modularity):
+            continue
+        mod_records.append({'Subject': subject, 'modularity': modularity, 'subj_idx': subj_idx})
+
+    mod_df = pd.DataFrame(mod_records).merge(pgs_df, on='Subject')
+    report.append(f"\n  Modularity computed for {len(mod_df)} subjects at threshold {modularity_threshold}")
+
+    index_rows = []
+
+    group_order = ['low', 'middle', 'high']
+    for g_idx, group in enumerate(group_order):
+        group_df = mod_df[mod_df['pgs_group'] == group].copy()
+        if len(group_df) < n_quartiles:
+            report.append(f"\n  {group}: only {len(group_df)} subjects, skipping")
+            continue
+
+        group_df['mod_quartile'] = pd.qcut(
+            group_df['modularity'], q=n_quartiles, labels=False, duplicates='drop'
+        )
+        # Deterministic order before sampling so rng state is reproducible
+        group_df = group_df.sort_values('Subject').reset_index(drop=True)
+
+        report.append(f"\n  Group: {group} (n={len(group_df)})")
+        print(f'Creating exemplars for group: {group}')
+
+        for q in range(n_quartiles):
+            pool = group_df[group_df['mod_quartile'] == q]
+            if len(pool) == 0:
+                report.append(f"    Q{q+1}: empty quartile, skipping")
+                continue
+
+            rng = np.random.default_rng(seed + g_idx * 100 + q)
+            n_pick = min(n_exemplars, len(pool))
+            chosen = rng.choice(pool['Subject'].values, size=n_pick, replace=False)
+
+            report.append(f"    Q{q+1}: picked {n_pick} of {len(pool)} subjects")
+
+            for i, subject in enumerate(chosen):
+                subj_row = pool[pool['Subject'] == subject].iloc[0]
+                subj_idx = int(subj_row['subj_idx'])
+
+                row = mats_df_full.iloc[subj_idx, :].values / 100
+                subj_mat = vec_to_sym_matrix(row, diagonal=np.zeros(n_nodes))
+
+                thresholded = bct.threshold_proportional(subj_mat.copy(), viz_threshold, copy=False)
+                G = nx.from_numpy_array(thresholded)
+                pos = nx.spring_layout(G, iterations=100, seed=42)
+
+                largest_cc = max(nx.connected_components(G), key=len)
+                G_filtered = G.subgraph(largest_cc)
+                node_colours_filtered = node_colours[list(largest_cc)]
+                node_sizes = [2 * G_filtered.degree(n) for n in G_filtered.nodes()]
+
+                fig = plt.figure(figsize=(50*mm2inches, 50*mm2inches))
+                nx.draw(
+                    G_filtered, pos,
+                    node_size=node_sizes,
+                    node_color=node_colours_filtered,
+                    with_labels=False,
+                    edge_color='gray',
+                    edgecolors='black'
+                )
+
+                fname = (f'C5_Exemplar_Network_{n_nodes}Nodes_{group}PGS_'
+                         f'modQ{q+1}_e{i+1}_subj{subject}.png')
+                fig_path = figures_dir / fname
+                plt.savefig(fig_path, dpi=FIGURE_DPI, bbox_inches='tight', pad_inches=0.1)
+                plt.close(fig)
+
+                index_rows.append({
+                    'pgs_group': group,
+                    'mod_quartile': q + 1,
+                    'exemplar_idx': i + 1,
+                    'Subject': subject,
+                    'modularity': subj_row['modularity'],
+                    'filename': fname,
+                })
+
+    index_df = pd.DataFrame(index_rows)
+    index_path = results_dir / 'C5_exemplar_subjects.csv'
+    index_df.to_csv(index_path, index=False)
+    report.append(f"\n  Saved exemplar index: {index_path.name} ({len(index_df)} rows)")
 
 
 def bootstrap_density_boxplot(data, ax, position=0, width=0.4, color='lightblue',
@@ -307,7 +432,8 @@ def create_density_plots(graph_metrics_df, project_dir, n_bootstrap, sample_size
     figures_dir = project_dir / 'figures'
 
     for measure, measure_label in zip(['modularity', 'global_efficiency'],
-                                       ['Modularity', 'Global Efficiency']):
+                                       ['Modularity (residualised)',
+                                        'Global Efficiency (residualised)']):
         report.append(f"\nCreating density plot for {measure_label}...")
 
         fig, ax = plt.subplots(figsize=(60*mm2inches, 45*mm2inches))
@@ -500,8 +626,8 @@ def create_ellipse_extent_plot(graph_metrics_df, project_dir, n_bootstrap, sampl
                   color=group_colors[i], edgecolors='black', linewidth=0.5,
                   zorder=10, label=group_labels[i])
 
-    ax.set_xlabel('Modularity')
-    ax.set_ylabel('Global Efficiency')
+    ax.set_xlabel('Modularity (residualised)')
+    ax.set_ylabel('Global Efficiency (residualised)')
     ax.legend([], frameon=False)
     ax.grid(False)
     ax.set_aspect('equal', adjustable='datalim')
@@ -595,6 +721,10 @@ def main():
     create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_nodes,
                                   project_dir, args.n_bootstrap, args.sample_size, report)
 
+    # Create per-subject exemplar networks by PGS group x modularity quartile
+    create_exemplar_networks(pgs_df, mats_df_full, ids, partition_df,
+                             n_nodes, project_dir, report)
+
     # Create density plots
     create_density_plots(graph_metrics_df, project_dir, args.n_bootstrap,
                          args.sample_size, report)
@@ -610,6 +740,9 @@ def main():
     report.append("\nGenerated figures:")
     report.append("  - C5_Connectivity_Matrix_*Nodes_*PGS_bootstrap.png (per group)")
     report.append("  - C5_Network_Visualisation_*Nodes_*PGS_bootstrap.png (per group)")
+    report.append("  - C5_Exemplar_Network_*Nodes_*PGS_modQ*_e*_subj*.png "
+                  "(4 exemplars x 4 quartiles x 3 groups = 48)")
+    report.append("  - C5_exemplar_subjects.csv (index of exemplar selections)")
     report.append("  - C5_Bootstrap_Density_Plot_modularity.png")
     report.append("  - C5_Bootstrap_Density_Plot_global_efficiency.png")
     report.append("  - C5_Bootstrap_Ellipse_Extent_Plot.png")

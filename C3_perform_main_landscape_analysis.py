@@ -39,6 +39,9 @@ from scipy.stats import pearsonr, levene, zscore, ttest_ind
 import networkx as nx
 import bct
 import warnings
+
+from utils.covariates import COVARIATES, regress_out_covariates
+
 warnings.filterwarnings('ignore')
 
 # Set up plotting
@@ -235,6 +238,10 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
                     'Social_Score': row['Social_Score'],
                     'pgs_group': row['pgs_group'],
                     'pgs_z': row['pgs_z'],
+                    'Age_in_Yrs': row['Age_in_Yrs'],
+                    'Gender': row['Gender'],
+                    'FS_IntraCranial_Vol': row['FS_IntraCranial_Vol'],
+                    'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
                     'n_nodes': n_nodes,
                     'threshold': threshold,
                     'config': config_key
@@ -244,8 +251,20 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
             n_before = len(config_df)
             config_df = config_df.dropna(subset=['modularity', 'global_efficiency'])
 
+            # Residualise brain metrics for age, sex, ICV, and head motion.
+            # Keep raw values under *_raw for audit; all downstream tests read
+            # the 'modularity' / 'global_efficiency' columns, so they now
+            # operate on residuals (matches C1's covariate handling).
+            config_df['modularity_raw'] = config_df['modularity']
+            config_df['global_efficiency_raw'] = config_df['global_efficiency']
+            config_df[['modularity', 'global_efficiency']] = regress_out_covariates(
+                config_df[['modularity', 'global_efficiency']],
+                config_df[list(COVARIATES)],
+            )
+
             all_results[config_key] = config_df
             report.append(f"  Final n = {len(config_df)} (excluded {n_before - len(config_df)} with missing metrics)")
+            report.append(f"  Residualised modularity & global_efficiency for: {', '.join(COVARIATES)}")
 
     return all_results
 
@@ -676,7 +695,7 @@ def create_main_figure(all_results, brain_behavior_results, variability_results,
            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
            verticalalignment='top')
 
-    ax.set_xlabel('Modularity')
+    ax.set_xlabel('Modularity (residualised)')
     ax.set_ylabel('Social Score')
     ax.set_title('Finding 1: Modularity-Social\nFunctioning Association')
     ax.legend(fontsize=7)
@@ -690,7 +709,7 @@ def create_main_figure(all_results, brain_behavior_results, variability_results,
         mod_stds = [mod_result['group_stats'][g]['std'] for g in ['low', 'middle', 'high']]
 
         bars = ax.bar(group_names, mod_stds, color=colors, alpha=0.7)
-        ax.set_ylabel('Modularity Standard Deviation')
+        ax.set_ylabel('Modularity SD (residualised)')
         ax.set_title('Finding 2: Modularity Variability\nby PGS Group')
 
         var_ratio = mod_result['var_ratio']
@@ -712,7 +731,7 @@ def create_main_figure(all_results, brain_behavior_results, variability_results,
         eff_stds = [eff_result['group_stats'][g]['std'] for g in ['low', 'middle', 'high']]
 
         bars = ax.bar(group_names, eff_stds, color=colors, alpha=0.7)
-        ax.set_ylabel('Global Efficiency Standard Deviation')
+        ax.set_ylabel('Global Efficiency SD (residualised)')
         ax.set_title('Finding 3: Efficiency Variability\n(No Group Differences)')
 
         var_ratio = eff_result['var_ratio']
@@ -732,8 +751,8 @@ def create_main_figure(all_results, brain_behavior_results, variability_results,
         ax.scatter(group_data['global_efficiency'], group_data['modularity'],
                   alpha=0.6, color=colors[i], label=f'{group.capitalize()} PGS', s=20)
 
-    ax.set_xlabel('Global Efficiency')
-    ax.set_ylabel('Modularity')
+    ax.set_xlabel('Global Efficiency (residualised)')
+    ax.set_ylabel('Modularity (residualised)')
     ax.set_title('Network Organization Space')
     ax.legend(fontsize=7)
 
@@ -748,7 +767,7 @@ def create_main_figure(all_results, brain_behavior_results, variability_results,
         ax.scatter(low_mod['global_efficiency'], low_mod['Social_Score'],
                   color='blue', alpha=0.7, label='Low Modularity Strategy', s=30)
 
-        ax.set_xlabel('Global Efficiency')
+        ax.set_xlabel('Global Efficiency (residualised)')
         ax.set_ylabel('Social Score')
         ax.set_title('High PGS: Different Strategies\nSimilar Outcomes')
         ax.legend(fontsize=7)
@@ -1056,6 +1075,9 @@ def main():
         f"Main threshold: {args.main_threshold}",
         f"Threshold sensitivity sweep: {args.thresholds}",
         f"Motion threshold: {args.motion_threshold}",
+        f"Brain metrics residualised for: {', '.join(COVARIATES)}",
+        "  (applied once per threshold config; all association and",
+        "   variability tests operate on residuals)",
         ""
     ]
 
