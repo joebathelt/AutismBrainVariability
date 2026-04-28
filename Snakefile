@@ -9,12 +9,17 @@ configfile: "config.yaml"
 PROJECT_DIR = config["project_dir"]
 DATA_DIR = f"{PROJECT_DIR}/data"
 CODE_DIR = f"{PROJECT_DIR}/code"
-GENETICS_INPUT_DIR = f"{DATA_DIR}/raw_anonymised"  # Original genetics data (read-only)
-PLINK_DIR = f"{DATA_DIR}/PLINK_anonymised"        # PLINK working directory (outputs)
-QCDIR = f"{DATA_DIR}/plinkQC_output"              # B1 plinkQC output directory
+GENETICS_INPUT_DIR = f"{DATA_DIR}/raw_anonymised"          # Original genetics data, hg19 (read-only)
+GENETICS_HG38_DIR = f"{DATA_DIR}/raw_anonymised_hg38"      # B0 lifted-over genetics data, hg38
+PLINK_DIR = f"{DATA_DIR}/PLINK_anonymised"                # PLINK working directory (outputs)
+QCDIR = f"{DATA_DIR}/plinkQC_output"                      # B1 plinkQC output directory
 RESULTS_DIR = f"{PROJECT_DIR}/results"
 LOGS_DIR = f"{PROJECT_DIR}/logs"
 GCTA_PATH = config.get("gcta_path", "/opt/gcta")
+
+# PLINK file prefixes (must match defaults in B0/B1 R scripts)
+GENETICS_NAME = "Neuro_Chip_anonymised"
+GENETICS_NAME_HG38 = f"{GENETICS_NAME}_hg38"
 
 # Final target outputs
 rule all:
@@ -31,7 +36,9 @@ rule all:
         f"{PROJECT_DIR}/reports/A3_evaluate_social_factor_report.txt",
 
         # Phase B: Genetic/PGS analysis
-        f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
+        f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bed",
+        f"{PROJECT_DIR}/reports/B0_liftover_report.txt",
+        f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bed",
         f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt",
         f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile",
         f"{PROJECT_DIR}/figures/B3_pgs_threshold_evaluation.png",
@@ -137,12 +144,38 @@ rule evaluate_social_factor:
 # Phase B: Genetic/PGS Analysis
 # ============================================================================
 
-rule plinkqc_genotype_qc:
-    """Genotype quality control using plinkQC (B1)"""
+rule liftover_hg19_to_hg38:
+    """Liftover NeuroChip genotypes from hg19 to hg38 (B0).
+
+    Reads the original hg19 PLINK triplet, runs UCSC liftOver, and writes
+    a new hg38 PLINK triplet that B1 consumes. The chain file is downloaded
+    on first run into data/reference/liftover/."""
     input:
-        bfile=f"{GENETICS_INPUT_DIR}/Neuro_Chip_anonymised.bed"
+        bed=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bed",
+        bim=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bim",
+        fam=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.fam"
     output:
-        clean_bed=f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
+        bed=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bed",
+        bim=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bim",
+        fam=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.fam",
+        report=f"{PROJECT_DIR}/reports/B0_liftover_report.txt"
+    log:
+        f"{LOGS_DIR}/B0_liftover_hg19_to_hg38.log"
+    shell:
+        """
+        Rscript {CODE_DIR}/B0_liftover_hg19_to_hg38.R \
+            --project {PROJECT_DIR} > {log} 2>&1
+        """
+
+
+rule plinkqc_genotype_qc:
+    """Genotype quality control using plinkQC on hg38 data (B1)"""
+    input:
+        bed=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bed",
+        bim=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bim",
+        fam=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.fam"
+    output:
+        clean_bed=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bed",
         report=f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt"
     log:
         f"{LOGS_DIR}/B1_plinkqc_genotype_qc.log"
@@ -156,7 +189,7 @@ rule plinkqc_genotype_qc:
 rule translate_pgs_to_hcp:
     """SNP harmonization, PCA, relatedness filtering, and PGS calculation (B2)"""
     input:
-        clean_bed=f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
+        clean_bed=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bed",
         gwas=f"{GENETICS_INPUT_DIR}/iPSYCH_PGC_ASD_Nov_2017.gz",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
     output:
@@ -175,6 +208,7 @@ rule translate_pgs_to_hcp:
             --code-dir {CODE_DIR} \
             --phenotypic {input.phenotypic} \
             --qcdir {QCDIR} \
+            --clean-name {GENETICS_NAME_HG38}.clean \
             --output {output.pgs_scores} > {log} 2>&1
         """
 
@@ -562,6 +596,8 @@ rule clean:
         # Phase B outputs
         rm -f {DATA_DIR}/pgs_selected_threshold.txt
         rm -f {DATA_DIR}/pgs_residuals.csv
+        # Clean B0 hg38 liftover outputs
+        rm -rf {GENETICS_HG38_DIR}/*
         # Clean B1 plinkQC output directory
         rm -rf {QCDIR}/*
         # Clean all PLINK working directory outputs (inputs are in genetics_data/)
@@ -578,6 +614,7 @@ rule clean:
         rm -f {PROJECT_DIR}/reports/A1_*.txt
         rm -f {PROJECT_DIR}/reports/A2_*.txt
         rm -f {PROJECT_DIR}/reports/A3_*.txt
+        rm -f {PROJECT_DIR}/reports/B0_*.txt
         rm -f {PROJECT_DIR}/reports/B1_*.txt
         rm -f {PROJECT_DIR}/reports/B3_*.txt
         rm -f {PROJECT_DIR}/reports/B5_*.txt
@@ -605,11 +642,9 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/*_negative.png
         rm -f {PROJECT_DIR}/figures/*_surf.png
 
-        # Stale pre-rename outputs (B0->B1, B2->B3, B4->B5)
-        rm -f {PROJECT_DIR}/reports/B0_*.txt
+        # Stale pre-rename outputs (B2->B3, B4->B5)
         rm -f {PROJECT_DIR}/reports/B2_*.txt
         rm -f {PROJECT_DIR}/reports/B4_*.txt
-        rm -f {PROJECT_DIR}/figures/B0_*.png
         rm -f {PROJECT_DIR}/figures/B2_*.png
         rm -f {PROJECT_DIR}/figures/B4_*.png
 
