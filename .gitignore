@@ -20,4 +20,6 @@ Icon[]
 # Local directories for code development
 .claude
 .snakemake
-__pycache__
+__pycache__.git.broken/
+.Rhistory
+Rplots.pdf

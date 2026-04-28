@@ -545,7 +545,7 @@ run_per_marker_qc <- function() {
 # --- Section 8: Ancestry check (RF prediction) --------------------------------
 # Uses plinkQC's pretrained random forest classifier via ancestry_prediction().
 # Requires plink2 and loading matrices from plinkQCAncestryData.
-#
+#``
 # Pre-step: dedupe multi-probe variants and recode IDs to chr:pos[hg38] so
 # the hg38 loading matrices match by position. Without this, plinkQC's
 # default rsID match retains only ~400 variants on NeuroChip.
