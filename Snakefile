@@ -284,7 +284,7 @@ rule univariate_fmri_prediction:
         f"{LOGS_DIR}/C1_univariate_fmri.log"
     shell:
         """
-        python {CODE_DIR}/C1_run_univariate_fMRI_prediction.py \
+        xvfb-run -a python {CODE_DIR}/C1_run_univariate_fMRI_prediction.py \
             --project {PROJECT_DIR} \
             --social {input.social} \
             --pgs {input.pgs} \
@@ -322,7 +322,7 @@ rule find_fmri_communities:
         f"{LOGS_DIR}/C2_find_communities.log"
     shell:
         """
-        python {CODE_DIR}/C2_find_communities_fMRI.py \
+        xvfb-run -a python {CODE_DIR}/C2_find_communities_fMRI.py \
             --project {PROJECT_DIR} \
             --matrices-dir {input.matrices_dir} \
             --ids {input.ids} \
