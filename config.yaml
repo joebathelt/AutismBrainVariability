@@ -1,7 +1,7 @@
 # Configuration file for Brain Compensation Snakemake workflow
 
 # Project directories
-project_dir: "/Users/joebathelt/Documents/1_Projects/BrainCompensation"
+project_dir: "/home/jmbathe/Documents/1_Projects/BrainCompensation"
 
 # Input data files (relative to data directory)
 # Adjust these to match your actual input file names
@@ -13,7 +13,7 @@ genetic_data_prefix: "genetic_data"
 matrices_dir: "HCP_PTN1200/netmats"
 
 # External tools
-gcta_path: "/opt/gcta"
+gcta_path: "/usr/local/bin"
 
 # Computational resources
 threads: 8        # Number of threads for parallel processing

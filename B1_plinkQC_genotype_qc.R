@@ -78,7 +78,7 @@ imissTh       <- 0.03
 hetTh         <- 3
 highIBDTh     <- 0.1875
 europeanTh    <- 1.5
-skip_ancestry <- FALSE
+skip_ancestry <- TRUE
 
 i <- 1
 while (i <= length(args)) {
