@@ -184,6 +184,8 @@ rule plinkqc_genotype_qc:
         fam=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.fam"
     output:
         clean_bed=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bed",
+        clean_bim=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bim",
+        clean_fam=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.fam",
         report=f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt"
     log:
         f"{LOGS_DIR}/B1_plinkqc_genotype_qc.log"

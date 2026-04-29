@@ -658,6 +658,7 @@ class ConnectivityAnalysis:
         self.pgs_df = _read_csv_retry(self.pgs_file)
         self.social_df = _read_csv_retry(self.social_file)
         self.behavioural_df = _read_csv_retry(self.behavioural_file)
+        self.behavioural_df = self.behavioural_df[self.behavioural_df['Gender'] == 'M']
         self.phenotypic_df = _read_csv_retry(self.phenotypic_file)
         self.movement_df = _read_csv_retry(self.movement_file)
 
@@ -737,9 +738,8 @@ class ConnectivityAnalysis:
                          if col.startswith('conn')]
         X_conn = merged_df[conn_features].values
 
-        # Covariates to regress out (age, gender, intracranial volume,
-        # head motion)
-        covariates = ['Gender', 'Age_in_Yrs', 'FS_IntraCranial_Vol',
+        # Covariates to regress out (age, intracranial volume, head motion)
+        covariates = ['Age_in_Yrs', 'FS_IntraCranial_Vol',
                       'Movement_RelativeRMS_mean']
         X_cov = pd.get_dummies(merged_df[covariates], drop_first=True)
 

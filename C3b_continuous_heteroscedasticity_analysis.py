@@ -90,6 +90,7 @@ def load_and_prepare_data(project_folder, pgs_file, social_file, behavioural_fil
     pgs_df = pd.read_csv(pgs_file)
     social_df = pd.read_csv(social_file)
     behavioural_df = pd.read_csv(behavioural_file)
+    behavioural_df = behavioural_df[behavioural_df['Gender'] == 'M']
     phenotypic_df = pd.read_csv(phenotypic_file)
     phenotypic_df = phenotypic_df.rename(columns={'Individual_ID': 'Subject'})
     movement_df = pd.read_csv(movement_file)
@@ -185,7 +186,6 @@ def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold, rep
             'pgs_group': row['pgs_group'],
             'pgs_z': row['pgs_z'],
             'Age_in_Yrs': row['Age_in_Yrs'],
-            'Gender': row['Gender'],
             'FS_IntraCranial_Vol': row['FS_IntraCranial_Vol'],
             'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
         })

@@ -77,6 +77,7 @@ def load_and_prepare_data(args, report):
     pgs_df = pd.read_csv(args.pgs)
     social_df = pd.read_csv(args.social)
     behavioural_df = pd.read_csv(args.behavioural)
+    behavioural_df = behavioural_df[behavioural_df['Gender'] == 'M']
     phenotypic_df = pd.read_csv(args.phenotypic)
     phenotypic_df = phenotypic_df.rename(columns={'Individual_ID': 'Subject'})
     movement_df = pd.read_csv(args.movement)
@@ -239,7 +240,6 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
                     'pgs_group': row['pgs_group'],
                     'pgs_z': row['pgs_z'],
                     'Age_in_Yrs': row['Age_in_Yrs'],
-                    'Gender': row['Gender'],
                     'FS_IntraCranial_Vol': row['FS_IntraCranial_Vol'],
                     'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
                     'n_nodes': n_nodes,

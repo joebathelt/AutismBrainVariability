@@ -100,6 +100,7 @@ def evaluate_blup_prediction(blup_pgs_file, original_pgs_file, social_scores_fil
     phenotypic_df = pd.read_csv(phenotypic_file)
     phenotypic_df = phenotypic_df.rename(columns={'Individual_ID': 'Subject'})
     behavioural_df = pd.read_csv(behavioural_file)
+    behavioural_df = behavioural_df[behavioural_df['Gender'] == 'M']
     behavioural_df = pd.merge(behavioural_df, phenotypic_df, on='Subject')
     report.append(f"Behavioural data shape: {behavioural_df.shape}")
     report.append("")
@@ -136,7 +137,7 @@ def evaluate_blup_prediction(blup_pgs_file, original_pgs_file, social_scores_fil
 
     # Model 1: Original PGS in unrelated individuals
     report.append("Model 1: Original PGS predicting Social Score (unrelated sample)")
-    model1 = smf.ols('Social_Score ~ original_PGS_z + C(Gender) + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
+    model1 = smf.ols('Social_Score ~ original_PGS_z + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
                      data=merged_df).fit()
     report.append(f"  Original PGS beta: {model1.params['original_PGS_z']:.4f}")
     report.append(f"  Original PGS p-value: {model1.pvalues['original_PGS_z']:.4e}")
@@ -145,7 +146,7 @@ def evaluate_blup_prediction(blup_pgs_file, original_pgs_file, social_scores_fil
 
     # Model 2: BLUP PGS in unrelated individuals
     report.append("Model 2: BLUP PGS predicting Social Score (unrelated sample)")
-    model2 = smf.ols('Social_Score ~ blup_PGS_z + C(Gender) + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
+    model2 = smf.ols('Social_Score ~ blup_PGS_z + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
                      data=merged_df).fit()
     report.append(f"  BLUP PGS beta: {model2.params['blup_PGS_z']:.4f}")
     report.append(f"  BLUP PGS p-value: {model2.pvalues['blup_PGS_z']:.4e}")
@@ -154,7 +155,7 @@ def evaluate_blup_prediction(blup_pgs_file, original_pgs_file, social_scores_fil
 
     # Model 3: Testing relatedness moderation
     report.append("Model 3: Testing if relatedness moderates PGS effect")
-    model3 = smf.ols('Social_Score ~ blup_PGS_z * C(unrelated) + C(Gender) + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
+    model3 = smf.ols('Social_Score ~ blup_PGS_z * C(unrelated) + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
                      data=merged_df).fit()
     report.append(f"  Interaction p-value: {model3.pvalues.get('blup_PGS_z:C(unrelated)[T.Unrelated]', 'N/A')}")
     report.append("")
@@ -176,7 +177,7 @@ def evaluate_blup_prediction(blup_pgs_file, original_pgs_file, social_scores_fil
 
     # Adjusted model with 5 PCs
     full_merged['blup_PGS_z'] = zscore(full_merged['blup_PGS'])
-    adjusted_model = smf.ols('Social_Score ~ blup_PGS_z + C(Gender) + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
+    adjusted_model = smf.ols('Social_Score ~ blup_PGS_z + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
                              data=full_merged).fit()
 
     beta = adjusted_model.params['blup_PGS_z']
@@ -194,7 +195,7 @@ def evaluate_blup_prediction(blup_pgs_file, original_pgs_file, social_scores_fil
     report.append("-" * 80)
 
     # Regress covariates out of PGS scores
-    residual_model = smf.ols('blup_PGS ~ C(Gender) + Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
+    residual_model = smf.ols('blup_PGS ~ Age_in_Yrs + PC1 + PC2 + PC3 + PC4 + PC5',
                              data=full_merged).fit()
     full_merged['blup_PGS_residuals'] = residual_model.resid
 
