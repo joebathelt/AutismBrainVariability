@@ -1,10 +1,10 @@
 """
 D2_grid_sensitivity.py
 
-Grid sweep across parcellation × matrix-type × density threshold to find any
-configuration in which the prior modularity-PGS heteroscedasticity finding is
-recoverable. Holds the analysis cohort/specification fixed at the C0 baseline
-(ancestry=on, sex=M-only, PGS residualised on age+5PCs).
+Grid sweep across parcellation x matrix-type x edge-density threshold to find
+configurations that change the SDS-driven heteroscedasticity finding. Holds
+the cohort fixed at the C0 baseline (M+F, motion<0.2, brain metrics
+residualised on age+ICV+motion+Gender). PGS is not loaded.
 
 Grid:
   parcellation : 15, 25, 50, 100, 200, 300 nodes
@@ -12,10 +12,12 @@ Grid:
   threshold    : 0.15, 0.20, 0.25 proportional density
   -> 6 x 2 x 3 = 36 cells
 
-For each cell we run BP, White, decile-trend, balanced-bootstrap, and DGLM
-(joint mean-variance MLE), and apply Bonferroni + BH-FDR within the cell.
+Predictor: sds_z = z(Social_Score). For each cell we run BP, White,
+decile-trend, balanced-bootstrap, and DGLM, then apply Bonferroni + BH-FDR
+within the cell.
 """
 
+import argparse
 import itertools
 from pathlib import Path
 
@@ -35,46 +37,28 @@ MOTION_THRESHOLD = 0.2
 RNG_SEED = 1729
 
 PARCELLATIONS = [15, 25, 50, 100, 200, 300]
-MATRIX_TYPES = ['netmats1', 'netmats2']  # 1=full, 2=partial
+MATRIX_TYPES = ['netmats1', 'netmats2']
 THRESHOLDS = [0.15, 0.20, 0.25]
 
 
 # --------------------------------------------------------------------------- #
-# Cohort assembly (baseline C0: anc=on, sex=M, PGS resid = age + 5 PCs)
+# Cohort assembly (M-only, motion<0.2, no PGS join)
 # --------------------------------------------------------------------------- #
 
 def load_cohort_inputs():
-    """Load ancestry-filtered PGS, 5-PC PCA, and phenotypes for the C0 cohort."""
-    blup = pd.read_csv(
-        PROJECT / 'data/PLINK_anonymised/full_pgs_scores.snp.blp.profile',
-        sep=r'\s+',
-    )[['IID', 'SCORESUM']].rename(columns={'IID': 'Subject', 'SCORESUM': 'pgs'})
-    pca = pd.read_csv(
-        PROJECT / 'data/PLINK_anonymised/Neuro_Chip_full_sample_pca.eigenvec',
-        sep=' ', header=None,
-    )
-    pca.columns = ['FID', 'Subject'] + [f'PC{i}' for i in range(1, 11)]
-    pca = pca[['Subject'] + [f'PC{i}' for i in range(1, 6)]]
-
     behaviour = pd.read_csv(PROJECT / 'data/hcp_behavioural_raw.csv')
-    behaviour = behaviour[behaviour['Gender'] == 'M']
+    # No sex filter: Gender is residualised out of brain metrics below.
     phenotypic = pd.read_csv(PROJECT / 'data/hcp_phenotypic_raw.csv').rename(
         columns={'Individual_ID': 'Subject'}
     )
     movement = pd.read_csv(PROJECT / 'data/hcp_movement_raw.csv')
+    social = pd.read_csv(PROJECT / 'results/cfa_factor_scores_full_sample.csv')
+    return dict(behaviour=behaviour, phenotypic=phenotypic,
+                movement=movement, social=social)
 
-    return dict(blup=blup, pca=pca, behaviour=behaviour,
-                phenotypic=phenotypic, movement=movement)
-
-
-# --------------------------------------------------------------------------- #
-# Network metrics — parametric over (n_nodes, matrix_type, threshold)
-# --------------------------------------------------------------------------- #
 
 def get_partition(n_nodes):
-    """Resolve the partition CSV for a given parcellation size."""
     if n_nodes == 100:
-        # Use C2b consensus partition for 100 nodes (matches C3b)
         path = PROJECT / 'results/C2b_selected_partition.csv'
     else:
         path = PROJECT / f'results/C2_final_partition_{n_nodes}Nodes.csv'
@@ -82,16 +66,15 @@ def get_partition(n_nodes):
 
 
 def compute_network_metrics(n_nodes, matrix_type, threshold, ids):
-    """Return DataFrame indexed by Subject with modularity & global_efficiency."""
     matrix_file = (
         PROJECT
         / f'data/HCP_PTN1200/netmats/3T_HCP1200_MSMAll_d{n_nodes}_ts2/{matrix_type}.txt'
     )
     conn = pd.read_csv(matrix_file, header=None, sep=r'\s+')
     if conn.shape[1] != n_nodes ** 2:
-        raise ValueError(f"matrix {matrix_file} has {conn.shape[1]} cols, expected {n_nodes**2}")
+        raise ValueError(f"matrix {matrix_file} has {conn.shape[1]} cols, "
+                         f"expected {n_nodes**2}")
     conn.index = ids
-
     partition = get_partition(n_nodes)
     out = []
     for subject_id, row in conn.iterrows():
@@ -99,8 +82,7 @@ def compute_network_metrics(n_nodes, matrix_type, threshold, ids):
         mat = bct.threshold_proportional(mat, threshold)
         mat = np.nan_to_num(mat, nan=0.0)
         _, modularity = bct.modularity_und_sign(mat, partition)
-        mat_pos = mat.copy()
-        mat_pos[mat_pos < 0] = 0
+        mat_pos = mat.copy(); mat_pos[mat_pos < 0] = 0
         ge = nx.global_efficiency(nx.from_numpy_array(mat_pos))
         out.append({'Subject': subject_id, 'modularity': modularity,
                     'global_efficiency': ge})
@@ -108,18 +90,8 @@ def compute_network_metrics(n_nodes, matrix_type, threshold, ids):
 
 
 # --------------------------------------------------------------------------- #
-# Stat helpers (same battery as D1 but inlined for clarity)
+# Stat helpers
 # --------------------------------------------------------------------------- #
-
-def residualise_pgs(df, pc_cols):
-    """OLS-residualise PGS on age + given PCs, return z-scored residuals.
-    Mirrors B5: blup_PGS ~ Age_in_Yrs + PC1..PC5."""
-    cols = list(pc_cols) + ['Age_in_Yrs']
-    X = sm.add_constant(df[cols].values.astype(float))
-    y = df['pgs'].values.astype(float)
-    resid = y - sm.OLS(y, X).fit().predict(X)
-    return stats.zscore(resid)
-
 
 def regress_out(y, X_df):
     X = pd.get_dummies(X_df, drop_first=True).astype(float).values
@@ -131,7 +103,7 @@ def regress_out(y, X_df):
 
 def bp_white_test(df, metric):
     y = df[metric].values
-    X = sm.add_constant(df['pgs_z'].values)
+    X = sm.add_constant(df['sds_z'].values)
     resid = sm.OLS(y, X).fit().resid
     bp_lm, bp_p, _, _ = het_breuschpagan(resid, X)
     w_lm, w_p, _, _ = het_white(resid, X)
@@ -139,13 +111,13 @@ def bp_white_test(df, metric):
 
 
 def decile_trend(df, metric, n_bins=10):
-    s = df.sort_values('pgs_z').reset_index(drop=True)
-    s['bin'] = pd.qcut(s['pgs_z'], n_bins, labels=False, duplicates='drop')
+    s = df.sort_values('sds_z').reset_index(drop=True)
+    s['bin'] = pd.qcut(s['sds_z'], n_bins, labels=False, duplicates='drop')
     centres, sds = [], []
     for b in sorted(s['bin'].dropna().unique()):
         sub = s[s['bin'] == b]
         if len(sub) >= 2:
-            centres.append(sub['pgs_z'].mean())
+            centres.append(sub['sds_z'].mean())
             sds.append(sub[metric].std(ddof=1))
     if len(centres) < 3:
         return np.nan, np.nan
@@ -155,8 +127,8 @@ def decile_trend(df, metric, n_bins=10):
 
 def balanced_bootstrap(df, metric, n_bins=5, n_boot=1000, rng=None):
     rng = rng or np.random.default_rng(RNG_SEED)
-    s = df.sort_values('pgs_z').reset_index(drop=True)
-    s['bin'] = pd.qcut(s['pgs_z'], n_bins, labels=False, duplicates='drop')
+    s = df.sort_values('sds_z').reset_index(drop=True)
+    s['bin'] = pd.qcut(s['sds_z'], n_bins, labels=False, duplicates='drop')
     groups = [s[s['bin'] == b][metric].values
               for b in sorted(s['bin'].dropna().unique())]
     if len(groups) < 3:
@@ -165,16 +137,14 @@ def balanced_bootstrap(df, metric, n_bins=5, n_boot=1000, rng=None):
     centres = np.arange(len(groups))
     obs_var = np.array([np.var(g, ddof=1) for g in groups])
     obs_r = stats.pearsonr(centres, obs_var)[0]
-
-    boot_r = np.empty(n_boot)
-    boot_ratio = np.empty(n_boot)
-    for b in range(n_boot):
+    boot_r = np.empty(n_boot); boot_ratio = np.empty(n_boot)
+    for k in range(n_boot):
         var_b = np.array([
             np.var(rng.choice(g, size=n_per, replace=True), ddof=1)
             for g in groups
         ])
-        boot_r[b] = stats.pearsonr(centres, var_b)[0]
-        boot_ratio[b] = var_b[-1] / var_b[0] if var_b[0] > 0 else np.nan
+        boot_r[k] = stats.pearsonr(centres, var_b)[0]
+        boot_ratio[k] = var_b[-1] / var_b[0] if var_b[0] > 0 else np.nan
     return obs_r, float(np.mean(boot_r <= 0)), float(np.nanmedian(boot_ratio))
 
 
@@ -188,10 +158,8 @@ def fit_dglm(y_in, X_mu, X_sigma):
     def neg_ll(params, X_s):
         bm = params[:p_mu]
         bs = params[p_mu:p_mu + X_s.shape[1]]
-        mu = X_mu @ bm
         log_var = np.clip(X_s @ bs, -30, 30)
-        var = np.exp(log_var)
-        return 0.5 * np.sum(log_var + (y - mu) ** 2 / var)
+        return 0.5 * np.sum(log_var + (y - X_mu @ bm) ** 2 / np.exp(log_var))
 
     def fit(X_s):
         bm0 = np.linalg.lstsq(X_mu, y, rcond=None)[0]
@@ -221,9 +189,9 @@ def run_grid_cell(n_nodes, matrix_type, threshold, ids, raw):
     print(f"  d={n_nodes}  type={matrix_type}  thr={threshold}")
     metrics = compute_network_metrics(n_nodes, matrix_type, threshold, ids)
 
-    pc_cols = [f'PC{i}' for i in range(1, 6)]
-    df = metrics.reset_index().merge(raw['blup'], on='Subject')
-    df = df.merge(raw['pca'], on='Subject')
+    df = metrics.reset_index().merge(
+        raw['social'][['Subject', 'Social_Score']], on='Subject'
+    )
     df = df.merge(raw['behaviour'][['Subject', 'Gender', 'FS_IntraCranial_Vol']],
                   on='Subject')
     df = df.merge(raw['phenotypic'][['Subject', 'Age_in_Yrs']], on='Subject')
@@ -231,38 +199,38 @@ def run_grid_cell(n_nodes, matrix_type, threshold, ids, raw):
                   on='Subject')
     df = df[df['Movement_RelativeRMS_mean'] < MOTION_THRESHOLD]
     df = df.dropna(subset=['Age_in_Yrs', 'FS_IntraCranial_Vol',
-                           'Movement_RelativeRMS_mean', 'pgs',
+                           'Movement_RelativeRMS_mean', 'Social_Score',
                            'modularity', 'global_efficiency'])
     df = df.copy()
-    df['pgs_z'] = residualise_pgs(df, pc_cols)
+    df['sds_z'] = stats.zscore(df['Social_Score'].values)
 
     cov_df = df[['Age_in_Yrs', 'FS_IntraCranial_Vol',
-                 'Movement_RelativeRMS_mean']].copy()
+                 'Movement_RelativeRMS_mean', 'Gender']].copy()
     df['modularity_resid'] = regress_out(df['modularity'].values, cov_df)
     df['global_efficiency_resid'] = regress_out(
         df['global_efficiency'].values, cov_df
     )
 
     n = len(df)
-    z = df['pgs_z'].values
-    n_low = int((z <= -1).sum())
-    n_high = int((z >= 1).sum())
+    z = df['sds_z'].values
+    n_low = int((z <= -1).sum()); n_high = int((z >= 1).sum())
 
     out = {
         'n_nodes': n_nodes, 'matrix_type': matrix_type, 'threshold': threshold,
         'n': n, 'n_low': n_low, 'n_high': n_high,
     }
     p_pool, p_labels = [], []
-
     for metric in ('modularity_resid', 'global_efficiency_resid'):
         m_label = metric.replace('_resid', '')
         bp_lm, bp_p, w_lm, w_p = bp_white_test(df, metric)
         d_r, d_p = decile_trend(df, metric)
         b_r, b_p, b_ratio = balanced_bootstrap(df, metric, n_boot=1000)
 
-        Xmu = sm.add_constant(df[['pgs_z', 'Age_in_Yrs', 'FS_IntraCranial_Vol',
-                                   'Movement_RelativeRMS_mean']].values.astype(float))
-        Xsig = sm.add_constant(df[['pgs_z']].values.astype(float))
+        Xmu_df = df[['sds_z', 'Age_in_Yrs', 'FS_IntraCranial_Vol',
+                     'Movement_RelativeRMS_mean']].copy()
+        Xmu_df['Gender_M'] = (df['Gender'] == 'M').astype(int)
+        Xmu = sm.add_constant(Xmu_df.values.astype(float))
+        Xsig = sm.add_constant(df[['sds_z']].values.astype(float))
         alpha, lr, lr_p = fit_dglm(df[metric].values, Xmu, Xsig)
 
         out.update({
@@ -285,20 +253,16 @@ def run_grid_cell(n_nodes, matrix_type, threshold, ids, raw):
         out['n_sig_unc'] = int(np.sum(np.array(p_pool) < 0.05))
         out['n_sig_fdr'] = int(np.sum(fdr))
         out['n_sig_bonf'] = int(np.sum(bonf))
-        # Specifically flag any cell where modularity decile r > 0 AND p < .05,
-        # which would be the previously-claimed pattern
         mod_dec_p = out.get('modularity_decile_p', np.nan)
         mod_dec_r = out.get('modularity_decile_r', np.nan)
         out['modularity_increasing_var_sig'] = (
             np.isfinite(mod_dec_p) and mod_dec_p < 0.05 and mod_dec_r > 0
         )
-        # Same for bootstrap (variance ratio > 1 indicates increasing var)
         out['modularity_boot_increasing_var_sig'] = (
             np.isfinite(out['modularity_boot_p_inc'])
             and out['modularity_boot_p_inc'] < 0.05
             and out.get('modularity_boot_ratio', np.nan) > 1
         )
-        # And DGLM positive alpha + significant
         out['modularity_dglm_increasing_var_sig'] = (
             np.isfinite(out['modularity_dglm_p'])
             and out['modularity_dglm_p'] < 0.05
@@ -308,13 +272,18 @@ def run_grid_cell(n_nodes, matrix_type, threshold, ids, raw):
 
 
 def main():
-    out_dir = PROJECT / 'results/D1_sensitivity'
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--project', default=str(PROJECT))
+    args = parser.parse_args()
+    project = Path(args.project)
+
+    out_dir = project / 'results/D1_sensitivity'
     out_dir.mkdir(parents=True, exist_ok=True)
 
     raw = load_cohort_inputs()
-    ids = pd.read_csv(PROJECT / 'data/hcp_subids_raw.txt', header=None)[0].tolist()
-    print(f"Cohort: {len(raw['blup'])} BLUP-PGS subjects; "
-          f"{len(raw['behaviour'])} M-only behavioural; {len(ids)} connectivity ids")
+    ids = pd.read_csv(project / 'data/hcp_subids_raw.txt', header=None)[0].tolist()
+    print(f"Cohort: {len(raw['behaviour'])} M+F behavioural; "
+          f"{len(raw['social'])} social factor; {len(ids)} connectivity ids")
 
     results = []
     combos = list(itertools.product(PARCELLATIONS, MATRIX_TYPES, THRESHOLDS))
@@ -331,7 +300,6 @@ def main():
     df = pd.DataFrame(results)
     df.to_csv(out_dir / 'D2_grid_results.csv', index=False)
 
-    # Compact summary
     cols = ['n_nodes', 'matrix_type', 'threshold', 'n', 'n_low', 'n_high',
             'modularity_decile_r', 'modularity_decile_p',
             'modularity_boot_ratio', 'modularity_boot_p_inc',
@@ -344,12 +312,12 @@ def main():
     summary = df[[c for c in cols if c in df.columns]]
     summary.to_csv(out_dir / 'D2_grid_summary.csv', index=False)
 
-    # Report
     report = []
     report.append("=" * 88)
-    report.append("D2 GRID SENSITIVITY — parcellation x matrix-type x threshold")
+    report.append("D2 GRID SENSITIVITY — parcellation x matrix-type x threshold (SDS predictor)")
     report.append("=" * 88)
-    report.append("Cohort: ancestry-on, M-only, PGS resid = age + 5 PCs (matches C3b baseline)")
+    report.append("Cohort: M-only, motion<0.2, brain metrics residualised on age+ICV+motion")
+    report.append("Predictor: sds_z = z(Social_Score). PGS not loaded.")
     report.append(f"Grid: {PARCELLATIONS} x {MATRIX_TYPES} x {THRESHOLDS} = {len(combos)} cells")
     report.append("")
     report.append("Master grid (modularity-focused columns):")
@@ -358,11 +326,10 @@ def main():
         report.append(summary.to_string(index=False))
     report.append("")
 
-    # Counts of cells supporting "increasing variance" pattern
     n_dec = int(df.get('modularity_increasing_var_sig', pd.Series([])).sum())
     n_boot = int(df.get('modularity_boot_increasing_var_sig', pd.Series([])).sum())
     n_dgl = int(df.get('modularity_dglm_increasing_var_sig', pd.Series([])).sum())
-    report.append("Cells where modularity variance INCREASES with PGS (p < .05, uncorrected):")
+    report.append("Cells where modularity variance INCREASES with SDS (p < .05, uncorrected):")
     report.append(f"  Decile trend (r > 0)             : {n_dec} / {len(combos)}")
     report.append(f"  Bootstrap (var_ratio > 1)        : {n_boot} / {len(combos)}")
     report.append(f"  DGLM (alpha > 0)                 : {n_dgl} / {len(combos)}")
@@ -378,9 +345,9 @@ def main():
                                 'modularity_dglm_alpha', 'modularity_dglm_p']].to_string(index=False))
     else:
         report.append("No cell across all 36 configurations shows significant (p < .05)")
-        report.append("INCREASING modularity variance with PGS by any test.")
+        report.append("INCREASING modularity variance with SDS by any test.")
 
-    rpath = PROJECT / 'reports/D2_grid_sensitivity_report.txt'
+    rpath = project / 'reports/D2_grid_sensitivity_report.txt'
     rpath.write_text('\n'.join(report) + '\n')
     print(f"\nReport: {rpath}")
     print(f"Tables: {out_dir / 'D2_grid_results.csv'}")

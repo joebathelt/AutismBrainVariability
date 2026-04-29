@@ -1,30 +1,40 @@
-# Autism Brain Variability
+# Autism Brain Variability — behaviour-stratified
 
-Analysis code for a study testing **landscape theory** of brain organization
-in autism using the Human Connectome Project (HCP): does higher autism
-polygenic score (PGS) predict greater *variability* in brain network
-organisation, while preserving global efficiency?
+Analysis code for a study of brain–behaviour variability in the Human
+Connectome Project (HCP). Participants are stratified by **behaviour**
+(Social Difficulty Score, SDS = the CFA `Social_Score` factor where higher z
+= worse social performance) and we test whether worse social performance
+goes with **greater variability** in graph-theoretical brain measures.
+PGS is reserved for an exploratory secondary test of the SDS↔PGS link.
 
 The pipeline integrates three data modalities:
 
 1. **Phenotypic** — HCP behavioural measures, reduced via confirmatory factor
-   analysis to a social-cognition factor.
-2. **Genetic** — genotype QC, PGS calculation from the Grove et al. (2019)
-   iPSYCH-PGC autism GWAS, and BLUP extension to the full (related) sample.
-3. **fMRI** — resting-state connectivity, consensus community detection, and
+   analysis to a social-cognition factor (`Social_Score`, the SDS).
+2. **fMRI** — resting-state connectivity, consensus community detection, and
    graph-theoretical landscape analysis (modularity, global efficiency, and
-   their variance as a function of PGS).
+   their variance as a function of SDS).
+3. **Genetic (exploratory only)** — genotype QC, PGS calculation from the
+   Grove et al. (2019) iPSYCH-PGC autism GWAS, and BLUP extension to the full
+   (related) sample. PGS is intentionally NOT joined into the primary SDS
+   analyses to preserve N; only C6 inner-joins on the genotyped subset.
 
 ## Core hypotheses
 
-- **Brain–behaviour link.** Graph measures of integration and segregation predict social functioning.
-- **Compensation diversity.** High-PGS individuals show greater *variability*
-  in graph measures of integration and segregation.
+- **Primary.** Participants with higher SDS (worse social performance) show
+  greater variability of modularity and (to a lesser extent) global
+  efficiency, with means relatively preserved.
+- **Secondary (exploratory).** Higher autism PGS is associated with higher
+  SDS.
 
+The primary hypothesis is tested by SDS-tertile group comparison (low / middle
+/ high SDS, z-cuts with buffer) and by continuous heteroscedasticity tests
+(Breusch–Pagan, White, quantile regression, decile-trend, balanced-bootstrap,
+DGLM). The secondary is tested by an OLS regression in C6.
 
-These are tested both by group comparison (low / middle / high PGS) and by
-formal heteroscedasticity tests on the continuous PGS (Breusch–Pagan, White,
-quantile regression).
+The previous PGS-primary scripts (when participants were grouped by autism
+PGS) are quarantined under `archive/pgs_primary/` and are not part of the
+active workflow. The pre-flip state is also tagged `pgs-primary-v1`.
 
 ## Repository layout
 
@@ -43,12 +53,16 @@ code/
   C1_run_univariate_fMRI_prediction.py      # Edge-wise connectivity ~ social / PGS
   C2_find_communities_fMRI.py               # Consensus community detection
   C2b_evaluate_communities.py               # Parcellation resolution tuning
-  C3_perform_main_landscape_analysis.py     # Main landscape / graph-theory tests
-  C3b_continuous_heteroscedasticity_analysis.py  # Continuous BP / White / quantile tests
-  C5_visualize_networks.py                  # Bootstrap ellipses + network figures
-  generate_publication_figures.py           # Standalone publication SVGs
+  C3_perform_main_landscape_analysis.py     # SDS-stratified group + variability tests
+  C3b_continuous_heteroscedasticity_analysis.py  # Continuous BP / White / quantile / DGLM on SDS
+  C5_visualize_networks.py                  # SDS-grouped bootstrap ellipses & network figures
+  C6_exploratory_sds_pgs.py                 # Exploratory: Social_Score ~ blup_PGS_residuals
+  D1_sensitivity_analyses.py                # SDS-stratified sensitivity sweep (cohort/covariate cells)
+  D2_grid_sensitivity.py                    # SDS-stratified grid (parcellation × matrix-type × threshold)
+  generate_publication_figures.py           # Standalone publication SVGs (SDS-themed)
 
-  utils/                              # Shared helpers (ID tracking, connectome viz, …)
+  archive/pgs_primary/                # Frozen PGS-primary versions of C3/C3b/C5/generate_publication_figures
+  utils/                              # Shared helpers (ID tracking, connectome viz, covariates, …)
 
   Snakefile                           # Workflow definition (see README_SNAKEMAKE.md)
   config.yaml                         # Paths, thresholds, parcellation sizes

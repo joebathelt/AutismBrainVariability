@@ -64,12 +64,18 @@ rule all:
         f"{RESULTS_DIR}/C4_sensitivity_summary.csv",
         f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
         f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png",
+        f"{PROJECT_DIR}/reports/C6_exploratory_sds_pgs_report.txt",
+        f"{RESULTS_DIR}/C6_sds_pgs_regression.csv",
+        f"{PROJECT_DIR}/figures/C6_sds_vs_pgs_scatter.png",
+        f"{PROJECT_DIR}/reports/C7_sds_edges_pgs_report.txt",
+        f"{RESULTS_DIR}/C7_sds_edges_pgs.csv",
+        f"{PROJECT_DIR}/figures/C7_sds_edges_pgs_scatter.png",
 
         # Data quality check
         f"{RESULTS_DIR}/DataRetention_Overview.csv",
 
         # Publication figures
-        f"{PROJECT_DIR}/figures/publication/fig_pgs_social_scatter.svg"
+        f"{PROJECT_DIR}/figures/publication/fig_sds_distribution.svg"
 
 
 # ============================================================================
@@ -342,16 +348,17 @@ rule evaluate_blup:
 # ============================================================================
 
 rule univariate_fmri_prediction:
-    """Run univariate fMRI prediction analysis"""
+    """Edge-wise univariate connectivity ~ Social_Score (SDS-primary).
+    PGS is not loaded; PGS-related analyses live in rule exploratory_sds_pgs."""
     input:
-        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
         movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
     output:
-        report=f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt"
+        report=f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt",
+        edges_100=f"{RESULTS_DIR}/C1_social_univariate_edges_100.csv"
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
@@ -368,7 +375,6 @@ rule univariate_fmri_prediction:
         xvfb-run -a python {CODE_DIR}/C1_run_univariate_fMRI_prediction.py \
             --project {PROJECT_DIR} \
             --social {input.social} \
-            --pgs {input.pgs} \
             --behavioural {input.behavioural} \
             --phenotypic {input.phenotypic} \
             --movement {input.movement} \
@@ -444,10 +450,10 @@ rule evaluate_parcellations:
 
 
 rule main_landscape_analysis:
-    """Main landscape analysis at the C2b-selected parcellation, with
-    threshold sensitivity."""
+    """SDS-stratified landscape analysis at the C2b-selected parcellation.
+    PGS is intentionally not loaded here (preserves N for the primary test);
+    the SDS~PGS exploratory test lives in rule exploratory_sds_pgs."""
     input:
-        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
@@ -474,7 +480,6 @@ rule main_landscape_analysis:
         """
         python {CODE_DIR}/C3_perform_main_landscape_analysis.py \
             --project {PROJECT_DIR} \
-            --pgs {input.pgs} \
             --social {input.social} \
             --behavioural {input.behavioural} \
             --phenotypic {input.phenotypic} \
@@ -488,9 +493,9 @@ rule main_landscape_analysis:
 
 
 rule continuous_heteroscedasticity_analysis:
-    """Continuous heteroscedasticity analysis at the C2b-selected parcellation."""
+    """Continuous heteroscedasticity analysis on SDS at the C2b-selected
+    parcellation. PGS is not loaded here."""
     input:
-        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
@@ -516,7 +521,6 @@ rule continuous_heteroscedasticity_analysis:
         """
         python {CODE_DIR}/C3b_continuous_heteroscedasticity_analysis.py \
             --project {PROJECT_DIR} \
-            --pgs {input.pgs} \
             --social {input.social} \
             --behavioural {input.behavioural} \
             --phenotypic {input.phenotypic} \
@@ -530,9 +534,8 @@ rule continuous_heteroscedasticity_analysis:
 
 
 rule visualize_networks:
-    """Visualize network results at the C2b-selected parcellation."""
+    """Visualise SDS-stratified network results at the C2b-selected parcellation."""
     input:
-        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
         social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
         graph_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv",
         partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
@@ -552,7 +555,6 @@ rule visualize_networks:
         """
         python {CODE_DIR}/C5_visualize_networks.py \
             --project {PROJECT_DIR} \
-            --pgs {input.pgs} \
             --social {input.social} \
             --graph-metrics {input.graph_metrics} \
             --partition {input.partition} \
@@ -563,23 +565,81 @@ rule visualize_networks:
         """
 
 
+rule exploratory_sds_pgs:
+    """Exploratory: SDS ~ PGS regression on the genotyped subset of the C3
+    post-QC sample. Smaller N than the primary analysis; flagged as
+    exploratory in the report."""
+    input:
+        c3_results=f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
+        pgs_residuals=f"{RESULTS_DIR}/pgs_residuals.csv"
+    output:
+        report=f"{PROJECT_DIR}/reports/C6_exploratory_sds_pgs_report.txt",
+        results=f"{RESULTS_DIR}/C6_sds_pgs_regression.csv",
+        figure=f"{PROJECT_DIR}/figures/C6_sds_vs_pgs_scatter.png"
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/C6_exploratory_sds_pgs.log"
+    shell:
+        """
+        python {CODE_DIR}/C6_exploratory_sds_pgs.py \
+            --project {PROJECT_DIR} \
+            --c3-results {input.c3_results} \
+            --pgs-residuals {input.pgs_residuals} > {log} 2>&1
+        """
+
+
+rule sds_edges_pgs:
+    """Exploratory: PGS ~ avg connectivity across C1's SDS-significant
+    edges (per-subject summary), on the genotyped subset of the C3 sample.
+    Bridges the SDS edge-wise analysis (C1) and the PGS data (B5)."""
+    input:
+        c3_results=f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
+        pgs_residuals=f"{RESULTS_DIR}/pgs_residuals.csv",
+        edges=f"{RESULTS_DIR}/C1_social_univariate_edges_100.csv",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C7_sds_edges_pgs_report.txt",
+        results=f"{RESULTS_DIR}/C7_sds_edges_pgs.csv",
+        figure=f"{PROJECT_DIR}/figures/C7_sds_edges_pgs_scatter.png"
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        n_nodes=100
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/C7_sds_edges_pgs.log"
+    shell:
+        """
+        python {CODE_DIR}/C7_sds_edges_pgs.py \
+            --project {PROJECT_DIR} \
+            --c3-results {input.c3_results} \
+            --pgs-residuals {input.pgs_residuals} \
+            --edges {input.edges} \
+            --matrices-dir {params.matrices_dir} \
+            --ids {input.ids} \
+            --n-nodes {params.n_nodes} > {log} 2>&1
+        """
+
+
 rule generate_publication_figures:
-    """Generate standalone publication-ready SVG figures"""
+    """Generate standalone publication-ready SVG figures (SDS-stratified)."""
     input:
         graph_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv",
-        ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
+        ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png",
+        c6_results=f"{RESULTS_DIR}/C6_sds_pgs_regression.csv"
     output:
-        fig1=f"{PROJECT_DIR}/figures/publication/fig_pgs_social_scatter.svg",
-        fig2=f"{PROJECT_DIR}/figures/publication/fig_pgs_distribution.svg",
-        fig3=f"{PROJECT_DIR}/figures/publication/fig_pgs_group_boxplot.svg",
-        fig4=f"{PROJECT_DIR}/figures/publication/fig_modularity_social_scatter.svg",
+        fig1=f"{PROJECT_DIR}/figures/publication/fig_sds_distribution.svg",
+        fig2=f"{PROJECT_DIR}/figures/publication/fig_sds_group_boxplot.svg",
+        fig3=f"{PROJECT_DIR}/figures/publication/fig_modularity_sds_scatter.svg",
+        fig4=f"{PROJECT_DIR}/figures/publication/fig_efficiency_sds_scatter.svg",
         fig5=f"{PROJECT_DIR}/figures/publication/fig_modularity_variability_bar.svg",
         fig6=f"{PROJECT_DIR}/figures/publication/fig_efficiency_variability_bar.svg",
         fig7=f"{PROJECT_DIR}/figures/publication/fig_network_organization_space.svg",
-        fig8=f"{PROJECT_DIR}/figures/publication/fig_compensation_strategies.svg",
-        fig9=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_modularity.svg",
-        fig10=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_global_efficiency.svg",
-        fig11=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_ellipse_extent.svg"
+        fig8=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_modularity.svg",
+        fig9=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_global_efficiency.svg",
+        fig10=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_ellipse_extent.svg",
+        fig11=f"{PROJECT_DIR}/figures/publication/fig_sds_vs_pgs_scatter.svg"
     params:
         results_file=f"{RESULTS_DIR}/C4_main_network_metrics.csv"
     conda:
@@ -590,7 +650,8 @@ rule generate_publication_figures:
         """
         python {CODE_DIR}/generate_publication_figures.py \
             --project {PROJECT_DIR} \
-            --results-file {params.results_file} > {log} 2>&1
+            --results-file {params.results_file} \
+            --c6-results {input.c6_results} > {log} 2>&1
         """
 
 
@@ -671,6 +732,8 @@ rule clean:
         rm -f {PROJECT_DIR}/reports/C3_*.txt
         rm -f {PROJECT_DIR}/reports/C3b_*.txt
         rm -f {PROJECT_DIR}/reports/C5_*.txt
+        rm -f {PROJECT_DIR}/reports/C6_*.txt
+        rm -f {PROJECT_DIR}/reports/C7_*.txt
         rm -f {PROJECT_DIR}/figures/A1_*.png
         rm -f {PROJECT_DIR}/figures/A2_*.png
         rm -f {PROJECT_DIR}/figures/A3_*.png
@@ -684,6 +747,8 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/C3b_*.png
         rm -f {PROJECT_DIR}/figures/C4_*.png
         rm -f {PROJECT_DIR}/figures/C5_*.png
+        rm -f {PROJECT_DIR}/figures/C6_*.png
+        rm -f {PROJECT_DIR}/figures/C7_*.png
         rm -f {DATA_DIR}/C5_*.npy
 
         # Bezier connectome plots from C1 (not prefixed with C1_)

@@ -10,7 +10,7 @@ from sklearn.linear_model import LinearRegression
 
 
 COVARIATES = ("Age_in_Yrs", "FS_IntraCranial_Vol",
-              "Movement_RelativeRMS_mean")
+              "Movement_RelativeRMS_mean", "Gender")
 
 
 def regress_out_covariates(Y, covariate_df):
