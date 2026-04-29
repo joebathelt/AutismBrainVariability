@@ -4,7 +4,7 @@ D2_grid_sensitivity.py
 Grid sweep across parcellation × matrix-type × density threshold to find any
 configuration in which the prior modularity-PGS heteroscedasticity finding is
 recoverable. Holds the analysis cohort/specification fixed at the C0 baseline
-(ancestry=on, sex=M-only, PGS residualised on age+5PCs).
+(ancestry=on, mixed-sex, PGS residualised on age+5PCs).
 
 Grid:
   parcellation : 15, 25, 50, 100, 200, 300 nodes
@@ -40,7 +40,7 @@ THRESHOLDS = [0.15, 0.20, 0.25]
 
 
 # --------------------------------------------------------------------------- #
-# Cohort assembly (baseline C0: anc=on, sex=M, PGS resid = age + 5 PCs)
+# Cohort assembly (baseline C0: anc=on, mixed-sex, PGS resid = age + 5 PCs)
 # --------------------------------------------------------------------------- #
 
 def load_cohort_inputs():
@@ -57,7 +57,6 @@ def load_cohort_inputs():
     pca = pca[['Subject'] + [f'PC{i}' for i in range(1, 6)]]
 
     behaviour = pd.read_csv(PROJECT / 'data/hcp_behavioural_raw.csv')
-    behaviour = behaviour[behaviour['Gender'] == 'M']
     phenotypic = pd.read_csv(PROJECT / 'data/hcp_phenotypic_raw.csv').rename(
         columns={'Individual_ID': 'Subject'}
     )
@@ -112,10 +111,12 @@ def compute_network_metrics(n_nodes, matrix_type, threshold, ids):
 # --------------------------------------------------------------------------- #
 
 def residualise_pgs(df, pc_cols):
-    """OLS-residualise PGS on age + given PCs, return z-scored residuals.
-    Mirrors B5: blup_PGS ~ Age_in_Yrs + PC1..PC5."""
+    """OLS-residualise PGS on Gender + age + given PCs, return z-scored residuals.
+    Mirrors B5: blup_PGS ~ C(Gender) + Age_in_Yrs + PC1..PC5."""
     cols = list(pc_cols) + ['Age_in_Yrs']
-    X = sm.add_constant(df[cols].values.astype(float))
+    gender_dummy = (df['Gender'] == 'M').astype(float).values.reshape(-1, 1)
+    X = np.concatenate([gender_dummy, df[cols].values.astype(float)], axis=1)
+    X = sm.add_constant(X)
     y = df['pgs'].values.astype(float)
     resid = y - sm.OLS(y, X).fit().predict(X)
     return stats.zscore(resid)
@@ -236,7 +237,7 @@ def run_grid_cell(n_nodes, matrix_type, threshold, ids, raw):
     df = df.copy()
     df['pgs_z'] = residualise_pgs(df, pc_cols)
 
-    cov_df = df[['Age_in_Yrs', 'FS_IntraCranial_Vol',
+    cov_df = df[['Gender', 'Age_in_Yrs', 'FS_IntraCranial_Vol',
                  'Movement_RelativeRMS_mean']].copy()
     df['modularity_resid'] = regress_out(df['modularity'].values, cov_df)
     df['global_efficiency_resid'] = regress_out(

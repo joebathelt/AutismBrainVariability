@@ -63,6 +63,14 @@ mm2inches = 0.0393701
 FIGURE_DPI = 300
 
 
+def _suffixed(name, suffix):
+    """Insert suffix before file extension. ('foo.csv', '_bar') -> 'foo_bar.csv'."""
+    if not suffix:
+        return name
+    p = Path(name)
+    return f"{p.stem}{suffix}{p.suffix}"
+
+
 # %%
 # =============================================================================
 # 1. DATA LOADING AND PREPARATION
@@ -90,7 +98,6 @@ def load_and_prepare_data(project_folder, pgs_file, social_file, behavioural_fil
     pgs_df = pd.read_csv(pgs_file)
     social_df = pd.read_csv(social_file)
     behavioural_df = pd.read_csv(behavioural_file)
-    behavioural_df = behavioural_df[behavioural_df['Gender'] == 'M']
     phenotypic_df = pd.read_csv(phenotypic_file)
     phenotypic_df = phenotypic_df.rename(columns={'Individual_ID': 'Subject'})
     movement_df = pd.read_csv(movement_file)
@@ -613,7 +620,8 @@ def test_bootstrap_heteroscedasticity(df, report, n_bootstrap=1000, n_bins=5):
 # =============================================================================
 
 def create_main_figure(df, bp_results, white_results, qr_results,
-                       decile_results, bootstrap_results, figures_dir):
+                       decile_results, bootstrap_results, figures_dir,
+                       output_suffix=""):
     """Create 8-panel figure: 4 rows x 2 columns (modularity | global_efficiency)."""
 
     fig, axes = plt.subplots(4, 2, figsize=(280 * mm2inches, 320 * mm2inches), dpi=FIGURE_DPI)
@@ -759,7 +767,7 @@ def create_main_figure(df, bp_results, white_results, qr_results,
         ax.legend(fontsize=7)
 
     plt.tight_layout()
-    output_file = figures_dir / 'C3b_continuous_heteroscedasticity.png'
+    output_file = figures_dir / _suffixed('C3b_continuous_heteroscedasticity.png', output_suffix)
     plt.savefig(output_file, dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close(fig)
 
@@ -801,6 +809,10 @@ def main():
                         help='Network density threshold (default: 0.2)')
     parser.add_argument('--motion-threshold', type=float, default=0.2,
                         help='Motion threshold for subject exclusion (default: 0.2)')
+    parser.add_argument('--output-suffix', default="",
+                        help='Suffix appended (before extension) to all '
+                             'figure/results/report filenames. Use to keep '
+                             'parallel runs (e.g. "_noancestry") side by side.')
     args = parser.parse_args()
 
     project_folder = Path(args.project)
@@ -871,7 +883,8 @@ def main():
 
     # Create visualization
     create_main_figure(network_df, bp_results, white_results,
-                       qr_results, decile_results, bootstrap_results, figures_dir)
+                       qr_results, decile_results, bootstrap_results, figures_dir,
+                       output_suffix=args.output_suffix)
 
     # Final summary
     report.append("")
@@ -947,7 +960,7 @@ def main():
         report.append("but modularity does not.")
 
     # Save results
-    results_file = results_dir / 'C3b_heteroscedasticity_results.csv'
+    results_file = results_dir / _suffixed('C3b_heteroscedasticity_results.csv', args.output_suffix)
     network_df.to_csv(results_file, index=False)
     report.append("")
     report.append(f"Results saved to: {results_file}")
@@ -965,7 +978,7 @@ def main():
                 'slope_upper_ci': qr_results[metric]['slope_cis'][i][1],
                 'pvalue': qr_results[metric]['pvalues'][i]
             })
-    qr_coefs_file = results_dir / 'C3b_quantile_regression_coefficients.csv'
+    qr_coefs_file = results_dir / _suffixed('C3b_quantile_regression_coefficients.csv', args.output_suffix)
     pd.DataFrame(qr_rows).to_csv(qr_coefs_file, index=False)
     report.append(f"Quantile regression coefficients saved to: {qr_coefs_file}")
 
@@ -983,7 +996,7 @@ def main():
                 'sd_ci_upper': decile_results[metric]['sd_cis'][i][1],
                 'iqr': decile_results[metric]['iqrs'][i]
             })
-    decile_file = results_dir / 'C3b_decile_variability.csv'
+    decile_file = results_dir / _suffixed('C3b_decile_variability.csv', args.output_suffix)
     pd.DataFrame(decile_rows).to_csv(decile_file, index=False)
     report.append(f"Decile variability saved to: {decile_file}")
 
@@ -993,7 +1006,7 @@ def main():
     report.append("END OF REPORT")
     report.append("=" * 80)
 
-    report_file = reports_dir / 'C3b_continuous_heteroscedasticity_report.txt'
+    report_file = reports_dir / _suffixed('C3b_continuous_heteroscedasticity_report.txt', args.output_suffix)
     with open(report_file, 'w') as f:
         f.write('\n'.join(report))
 

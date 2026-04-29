@@ -766,16 +766,16 @@ def parse_args():
                    help="Output dir for keep/fail ID lists and per-sample CSV")
     p.add_argument("--n-pcs", type=int, default=20,
                    help="Number of PCs to compute via plink --pca")
-    p.add_argument("--mahalanobis-pcs", type=int, default=6,
+    p.add_argument("--mahalanobis-pcs", type=int, default=4,
                    help="Top K PCs used for the Mahalanobis distance "
                         "(K<n-pcs; brittleness grows with K)")
     p.add_argument("--ref-subpops", default="CEU,GBR,IBS,TSI",
                    help="Comma-separated 1KG subpopulations defining the "
                         "EUR reference centroid (FIN deliberately excluded)")
-    p.add_argument("--cutoff-method", choices=["chi2", "sd"], default="chi2",
+    p.add_argument("--cutoff-method", choices=["chi2", "sd"], default="sd",
                    help="chi2: D^2 <= chi2.ppf(q, df=K); "
                         "sd: D <= mean(ref-D) + n*sd(ref-D)")
-    p.add_argument("--chi2-quantile", type=float, default=0.999,
+    p.add_argument("--chi2-quantile", type=float, default=0.9999,
                    help="Used when --cutoff-method=chi2")
     p.add_argument("--sd-cutoff", type=float, default=6.0,
                    help="Used when --cutoff-method=sd; applied to D, not D^2")

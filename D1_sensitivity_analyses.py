@@ -137,12 +137,18 @@ def compute_network_metrics_all(conn, partition_path):
 # Per-cell helpers
 # --------------------------------------------------------------------------- #
 
-def residualise_pgs(df, pgs_col, pc_cols, include_age):
-    """OLS-residualise PGS on selected covariates. Returns z-scored residuals."""
+def residualise_pgs(df, pgs_col, pc_cols, include_age, include_gender=False):
+    """OLS-residualise PGS on selected covariates. Returns z-scored residuals.
+    include_gender adds a 0/1 male dummy when the cohort is mixed-sex."""
     cols = list(pc_cols) + (['Age_in_Yrs'] if include_age else [])
-    if not cols:
+    X_parts = []
+    if include_gender:
+        X_parts.append((df['Gender'] == 'M').astype(float).values.reshape(-1, 1))
+    if cols:
+        X_parts.append(df[cols].values.astype(float))
+    if not X_parts:
         return stats.zscore(df[pgs_col].values)
-    X = sm.add_constant(df[cols].values.astype(float))
+    X = sm.add_constant(np.concatenate(X_parts, axis=1))
     y = df[pgs_col].values.astype(float)
     resid = y - sm.OLS(y, X).fit().predict(X)
     return stats.zscore(resid)
@@ -314,6 +320,7 @@ def assemble_cell_df(spec, raw, network_df):
     chosen_pcs = pca_cols[:n_pcs] if n_pcs > 0 else []
     if spec['pgs_residualise']:
         df['pgs_z'] = residualise_pgs(df, pgs_col, chosen_pcs,
+                                       include_gender=(spec['sex_filter'] == 'both'),
                                       include_age=spec['include_age_in_pgs'])
     else:
         df['pgs_z'] = stats.zscore(df[pgs_col].values)
@@ -456,26 +463,26 @@ def main():
     print(f"  metrics computed for {len(network_df)} subjects")
 
     cells = [
-        dict(name='C0', description='current state (anc=on, M, age+5PCs)',
-             ancestry='on', sex_filter='M', n_pcs=5, include_age_in_pgs=True,
-             pgs_residualise=True),
-        dict(name='C1', description='S2: drop sex filter',
+        dict(name='C0', description='current state (anc=on, mixed-sex, age+5PCs)',
              ancestry='on', sex_filter='both', n_pcs=5, include_age_in_pgs=True,
              pgs_residualise=True),
-        dict(name='C2', description='S6: drop ancestry filter (M-only)',
-             ancestry='off', sex_filter='M', n_pcs=10, include_age_in_pgs=True,
+        dict(name='C1', description='S2: restrict to males-only',
+             ancestry='on', sex_filter='M', n_pcs=5, include_age_in_pgs=True,
              pgs_residualise=True),
-        dict(name='C3', description='S6: drop ancestry AND sex filters',
+        dict(name='C2', description='S6: drop ancestry filter',
              ancestry='off', sex_filter='both', n_pcs=10, include_age_in_pgs=True,
              pgs_residualise=True),
+        dict(name='C3', description='S6: drop ancestry, restrict to males-only',
+             ancestry='off', sex_filter='M', n_pcs=10, include_age_in_pgs=True,
+             pgs_residualise=True),
         dict(name='C4', description='S3: drop age from PGS resid; 10 PCs',
-             ancestry='on', sex_filter='M', n_pcs=10, include_age_in_pgs=False,
+             ancestry='on', sex_filter='both', n_pcs=10, include_age_in_pgs=False,
              pgs_residualise=True),
         dict(name='C5', description='S3 partial: keep age, use 10 PCs',
-             ancestry='on', sex_filter='M', n_pcs=10, include_age_in_pgs=True,
+             ancestry='on', sex_filter='both', n_pcs=10, include_age_in_pgs=True,
              pgs_residualise=True),
         dict(name='C6', description='no PGS residualisation (raw, z-scored)',
-             ancestry='on', sex_filter='M', n_pcs=0, include_age_in_pgs=False,
+             ancestry='on', sex_filter='both', n_pcs=0, include_age_in_pgs=False,
              pgs_residualise=False),
     ]
 

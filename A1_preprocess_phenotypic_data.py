@@ -123,9 +123,6 @@ def process_hcp_data(project_folder, behavioural_file, phenotypic_file, output_f
     # Filter participants with genetic data
     merged_df = merged_df[merged_df['HasGT'] == True]
     report.append(f"Data shape after genetic data filtering: {merged_df.shape}")
-
-    merged_df = merged_df[merged_df['Gender'] == 'M']
-    report.append(f"Data shape after sex filtering (males only): {merged_df.shape}")
     report.append("")
 
     # Replace NaN values with np.nan

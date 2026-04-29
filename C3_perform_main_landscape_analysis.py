@@ -60,6 +60,14 @@ mm2inches = 0.0393701
 FIGURE_DPI = 300
 
 
+def _suffixed(name, suffix):
+    """Insert suffix before file extension. ('foo.csv', '_bar') -> 'foo_bar.csv'."""
+    if not suffix:
+        return name
+    p = Path(name)
+    return f"{p.stem}{suffix}{p.suffix}"
+
+
 # %%
 # =============================================================================
 # 1. DATA LOADING AND PREPARATION
@@ -77,7 +85,6 @@ def load_and_prepare_data(args, report):
     pgs_df = pd.read_csv(args.pgs)
     social_df = pd.read_csv(args.social)
     behavioural_df = pd.read_csv(args.behavioural)
-    behavioural_df = behavioural_df[behavioural_df['Gender'] == 'M']
     phenotypic_df = pd.read_csv(args.phenotypic)
     phenotypic_df = phenotypic_df.rename(columns={'Individual_ID': 'Subject'})
     movement_df = pd.read_csv(args.movement)
@@ -787,7 +794,7 @@ def create_main_figure(all_results, brain_behavior_results, variability_results,
     ax.axis('off')
 
     plt.tight_layout()
-    output_file = figures_dir / 'C3_landscape_theory_graph_analysis.png'
+    output_file = figures_dir / _suffixed('C3_landscape_theory_graph_analysis.png', args.output_suffix)
     plt.savefig(output_file, dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close(fig)
 
@@ -942,7 +949,7 @@ Red borders = main threshold ({args.main_threshold})
 
     plt.tight_layout()
 
-    output_path = figures_dir / 'C4_sensitivity_analysis.png'
+    output_path = figures_dir / _suffixed('C4_sensitivity_analysis.png', args.output_suffix)
     plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close(fig)
 
@@ -955,7 +962,8 @@ Red borders = main threshold ({args.main_threshold})
 # 6. SAVE RESULTS
 # =============================================================================
 
-def save_results(all_results, brain_behavior_results, variability_results, results_dir, report):
+def save_results(all_results, brain_behavior_results, variability_results, results_dir, report,
+                 output_suffix=""):
     """Save all results to files."""
     report.append("\n" + "=" * 80)
     report.append("SAVING RESULTS")
@@ -963,7 +971,7 @@ def save_results(all_results, brain_behavior_results, variability_results, resul
 
     # Save individual configuration results
     for config_key, df in all_results.items():
-        output_path = results_dir / f'C4_network_metrics_{config_key}.csv'
+        output_path = results_dir / _suffixed(f'C4_network_metrics_{config_key}.csv', output_suffix)
         df.to_csv(output_path, index=False)
         report.append(f"Saved: {output_path.name}")
 
@@ -993,7 +1001,7 @@ def save_results(all_results, brain_behavior_results, variability_results, resul
             sensitivity_summary_df.loc[idx, 'efficiency_var_ratio'] = result['metrics']['global_efficiency']['var_ratio']
             sensitivity_summary_df.loc[idx, 'efficiency_var_p'] = result['metrics']['global_efficiency']['bootstrap_p']
 
-    summary_path = results_dir / 'C4_sensitivity_summary.csv'
+    summary_path = results_dir / _suffixed('C4_sensitivity_summary.csv', output_suffix)
     sensitivity_summary_df.to_csv(summary_path, index=False)
     report.append(f"Saved: {summary_path.name}")
 
@@ -1005,7 +1013,7 @@ def save_results(all_results, brain_behavior_results, variability_results, resul
         if result['is_main']:
             for name in ('C3_graph_theory_landscape_results.csv',
                          'C4_main_network_metrics.csv'):
-                path = results_dir / name
+                path = results_dir / _suffixed(name, output_suffix)
                 all_results[config].to_csv(path, index=False)
                 report.append(f"Saved: {path.name}")
             break
@@ -1046,6 +1054,10 @@ def main():
                         help='Main analysis threshold (default: 0.20)')
     parser.add_argument('--motion-threshold', type=float, default=0.2,
                         help='Motion threshold for subject exclusion (default: 0.2)')
+    parser.add_argument('--output-suffix', default="",
+                        help='Suffix appended (before extension) to all '
+                             'figure/results/report filenames. Use to keep '
+                             'parallel runs (e.g. "_noancestry") side by side.')
     args = parser.parse_args()
 
     # Derive parcellation resolution from the C2b-selected partition
@@ -1129,7 +1141,8 @@ def main():
                              all_results, args, figures_dir)
 
     # Save all results
-    save_results(all_results, brain_behavior_results, variability_results, results_dir, report)
+    save_results(all_results, brain_behavior_results, variability_results, results_dir, report,
+                 output_suffix=args.output_suffix)
 
     # Final summary
     report.append("\n" + "=" * 80)
@@ -1156,7 +1169,8 @@ def main():
     report.append("=" * 80)
 
     # Write report to file
-    report_file = reports_dir / 'C3_perform_main_landscape_analysis_report.txt'
+    report_file = reports_dir / _suffixed('C3_perform_main_landscape_analysis_report.txt',
+                                          args.output_suffix)
     with open(report_file, 'w') as f:
         f.write('\n'.join(report))
 
