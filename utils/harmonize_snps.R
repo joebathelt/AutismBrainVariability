@@ -207,7 +207,7 @@ harmonize_alleles <- function(bim, gwas, qc_snps, output_dir) {
     message("Harmonizing alleles...")
 
     # Merge BIM and GWAS data, filter to QC SNPs
-    info <- merge(bim, gwas, by = c("SNP", "CHR", "BP"), all.x = TRUE)
+    info <- merge(bim, gwas, by = c("SNP", "CHR"), all.x = TRUE)
     info <- info[SNP %in% qc_snps]
 
     # 1. Identify exact matches (no action needed)

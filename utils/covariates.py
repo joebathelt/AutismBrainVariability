@@ -9,7 +9,7 @@ import pandas as pd
 from sklearn.linear_model import LinearRegression
 
 
-COVARIATES = ("Age_in_Yrs", "FS_IntraCranial_Vol",
+COVARIATES = ("Age_in_Yrs", "Gender", "FS_IntraCranial_Vol",
               "Movement_RelativeRMS_mean")
 
 

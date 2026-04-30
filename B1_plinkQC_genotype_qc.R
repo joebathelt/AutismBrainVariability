@@ -450,9 +450,14 @@ run_per_individual_qc <- function() {
     path2plink      = path2plink,
     path2plink2     = path2plink2,
 
-    # Sex check disabled — source chrX genotypes are corrupted for females
-    # (see precompute_plink_files() and cross_check_sex_with_phenotype()).
-    dont.check_sex  = TRUE,
+    # SANITY-TEST OVERRIDE: chrX F-statistic sex check re-enabled to reproduce
+    # the legacy (pre-d9554de) pipeline behaviour from reproduce-landscape.
+    # Source chrX genotypes are corrupted for females (~26% het instead of
+    # ~50%) so this drops most/all females. Revert with
+    # `git checkout B1_plinkQC_genotype_qc.R`.
+    dont.check_sex  = FALSE,
+    maleTh          = 0.8,
+    femaleTh        = 0.2,
 
     # Heterozygosity and missingness
     dont.check_het_and_miss = FALSE,
@@ -655,9 +660,11 @@ run_clean_data <- function(do_ancestry) {
     qcdir       = qcdir,
     path2plink  = path2plink,
 
-    # Individual filters — sex check off (chrX corruption in source data;
-    # cross-check against trusted phenotype CSV runs separately).
-    filterSex               = FALSE,
+    # SANITY-TEST OVERRIDE: filterSex re-enabled so cleanData() drops samples
+    # whose .fam SEX disagrees with the chrX F-statistic call — matches the
+    # legacy (reproduce-landscape) pipeline despite known chrX corruption in
+    # the source data. The phenotype cross-check still runs but is advisory.
+    filterSex               = TRUE,
     filterHeterozygosity    = TRUE,
     filterSampleMissingness = TRUE,
     filterRelated           = FALSE,

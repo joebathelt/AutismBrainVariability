@@ -36,14 +36,11 @@ rule all:
         f"{PROJECT_DIR}/reports/A3_evaluate_social_factor_report.txt",
 
         # Phase B: Genetic/PGS analysis
-        f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bed",
-        f"{PROJECT_DIR}/reports/B0_liftover_report.txt",
-        f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bed",
+        # SANITY-TEST OVERRIDE: B0 liftover and B1b ancestry are bypassed —
+        # B1 consumes the original hg19 genotypes, B2 consumes B1's .clean
+        # triplet directly. Restore the hg38 targets to re-enable B0 + B1b.
+        f"{QCDIR}/{GENETICS_NAME}.clean.bed",
         f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt",
-        f"{QCDIR}/{GENETICS_NAME_HG38}.clean.ancestry.bed",
-        f"{PROJECT_DIR}/reports/B1b_ancestry_PCA_mahalanobis_report.txt",
-        f"{PROJECT_DIR}/figures/B1b_PCA_scatter.png",
-        f"{PROJECT_DIR}/figures/B1b_mahalanobis_distribution.png",
         f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile",
         f"{PROJECT_DIR}/figures/B3_pgs_threshold_evaluation.png",
         f"{PROJECT_DIR}/figures/B5_blup_evaluation.png",
@@ -173,19 +170,21 @@ rule liftover_hg19_to_hg38:
 
 
 rule plinkqc_genotype_qc:
-    """Genotype quality control using plinkQC on hg38 data (B1).
+    """Genotype quality control using plinkQC (B1).
 
-    Ancestry filtering is delegated to B1b (1000G-merged PCA + Mahalanobis),
-    so we pass --skip-ancestry here. B1 produces the unfiltered .clean
-    triplet; B1b consumes it and writes the canonical .clean.ancestry triplet."""
+    SANITY-TEST OVERRIDE: consumes the original hg19 genotypes directly
+    (bypassing B0 liftover) so the .bim BP coordinates match the iPSYCH
+    GWAS sumstats and the PRSice/harmonization output mirrors what
+    reproduce-landscape produced. --skip-ancestry stays on; B1b is
+    bypassed via the translate_pgs_to_hcp override below."""
     input:
-        bed=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bed",
-        bim=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bim",
-        fam=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.fam"
+        bed=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bed",
+        bim=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bim",
+        fam=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.fam"
     output:
-        clean_bed=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bed",
-        clean_bim=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bim",
-        clean_fam=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.fam",
+        clean_bed=f"{QCDIR}/{GENETICS_NAME}.clean.bed",
+        clean_bim=f"{QCDIR}/{GENETICS_NAME}.clean.bim",
+        clean_fam=f"{QCDIR}/{GENETICS_NAME}.clean.fam",
         report=f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt"
     log:
         f"{LOGS_DIR}/B1_plinkqc_genotype_qc.log"
@@ -193,6 +192,9 @@ rule plinkqc_genotype_qc:
         """
         Rscript {CODE_DIR}/B1_plinkQC_genotype_qc.R \
             --project {PROJECT_DIR} \
+            --indir data/raw_anonymised \
+            --name {GENETICS_NAME} \
+            --genomebuild hg19 \
             --skip-ancestry > {log} 2>&1
         """
 
@@ -233,10 +235,11 @@ rule ancestry_pca_mahalanobis:
 rule translate_pgs_to_hcp:
     """SNP harmonization, PCA, relatedness filtering, and PGS calculation (B2).
 
-    Consumes B1b's .clean.ancestry triplet (the ancestry-filtered output)
-    rather than B1's raw .clean (which has no ancestry filter applied)."""
+    SANITY-TEST OVERRIDE: consumes B1's raw hg19 .clean triplet (no
+    liftover, no ancestry filter). Restore by switching the prefix back
+    to `{GENETICS_NAME_HG38}.clean.ancestry` in input and --clean-name."""
     input:
-        clean_bed=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.ancestry.bed",
+        clean_bed=f"{QCDIR}/{GENETICS_NAME}.clean.bed",
         gwas=f"{GENETICS_INPUT_DIR}/iPSYCH_PGC_ASD_Nov_2017.gz",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
     output:
@@ -255,7 +258,7 @@ rule translate_pgs_to_hcp:
             --code-dir {CODE_DIR} \
             --phenotypic {input.phenotypic} \
             --qcdir {QCDIR} \
-            --clean-name {GENETICS_NAME_HG38}.clean.ancestry \
+            --clean-name {GENETICS_NAME}.clean \
             --output {output.pgs_scores} > {log} 2>&1
         """
 

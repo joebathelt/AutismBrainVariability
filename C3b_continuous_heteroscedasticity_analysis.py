@@ -193,6 +193,7 @@ def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold, rep
             'pgs_group': row['pgs_group'],
             'pgs_z': row['pgs_z'],
             'Age_in_Yrs': row['Age_in_Yrs'],
+            'Gender': row['Gender'],
             'FS_IntraCranial_Vol': row['FS_IntraCranial_Vol'],
             'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
         })

@@ -247,6 +247,7 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
                     'pgs_group': row['pgs_group'],
                     'pgs_z': row['pgs_z'],
                     'Age_in_Yrs': row['Age_in_Yrs'],
+                    'Gender': row['Gender'],
                     'FS_IntraCranial_Vol': row['FS_IntraCranial_Vol'],
                     'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
                     'n_nodes': n_nodes,
