@@ -47,6 +47,8 @@ usage <- function() {
   cat("  --name          PLINK file prefix [Neuro_Chip_anonymised]\n")
   cat("  --qcdir         QC output directory (relative to project) [data/plinkQC_output]\n")
   cat("  --refdir        Reference data directory (relative to project) [data/reference/1000Genomes]\n")
+  cat("  --demographics  Demographics CSV with Subject,Gender (relative to project) [data/raw_anonymised/behavioural_data_anonymised.csv]\n")
+  cat("  --sex-check-method  Sex-filter method: 'demographics' or 'chrx' [demographics]\n")
   cat("  --path2plink    Path to PLINK v1.9 executable [auto-detect]\n")
   cat("  --path2plink2   Path to PLINK 2.0 executable [auto-detect]\n")
   cat("  --maf           Minor allele frequency threshold [0.01]\n")
@@ -69,6 +71,8 @@ indir_rel     <- "data/raw_anonymised"
 name          <- "Neuro_Chip_anonymised"
 qcdir_rel     <- "data/plinkQC_output"
 refdir_rel    <- "data/reference/1000Genomes"
+demographics_rel <- "data/raw_anonymised/behavioural_data_anonymised.csv"
+sex_check_method <- "demographics"
 path2plink    <- NULL
 path2plink2   <- NULL
 mafTh         <- 0.01
@@ -92,6 +96,10 @@ while (i <= length(args)) {
     qcdir_rel <- args[i + 1]; i <- i + 2
   } else if (args[i] == "--refdir") {
     refdir_rel <- args[i + 1]; i <- i + 2
+  } else if (args[i] == "--demographics") {
+    demographics_rel <- args[i + 1]; i <- i + 2
+  } else if (args[i] == "--sex-check-method") {
+    sex_check_method <- args[i + 1]; i <- i + 2
   } else if (args[i] == "--path2plink") {
     path2plink <- args[i + 1]; i <- i + 2
   } else if (args[i] == "--path2plink2") {
@@ -125,11 +133,18 @@ if (is.null(project_dir)) {
   usage()
 }
 
+if (!sex_check_method %in% c("demographics", "chrx")) {
+  cat("Error: --sex-check-method must be 'demographics' or 'chrx' (got '",
+      sex_check_method, "')\n", sep = "")
+  usage()
+}
+
 # --- Section 3: Resolve paths and configuration -------------------------------
 
 indir      <- file.path(project_dir, indir_rel)
 qcdir      <- file.path(project_dir, qcdir_rel)
 refdir     <- file.path(project_dir, refdir_rel)
+demographics_path <- file.path(project_dir, demographics_rel)
 figures_dir <- file.path(project_dir, "figures")
 reports_dir <- file.path(project_dir, "reports")
 
@@ -253,9 +268,12 @@ precompute_plink_files <- function() {
           "--out", file.path(qcdir, name))
   }
 
-  # 5c. Sex check (produces .sexcheck)
-  if (!file.exists(file.path(qcdir, paste0(name, ".sexcheck")))) {
-    message("Running sex check...")
+  # 5c. Sex check (chrX-based) — only when sex_check_method == "chrx".
+  # The "demographics" method skips this and uses the recorded Gender from
+  # the demographics CSV (see compute_sex_fail_from_demographics).
+  if (sex_check_method == "chrx" &&
+      !file.exists(file.path(qcdir, paste0(name, ".sexcheck")))) {
+    message("Running chrX sex check...")
     plink("--bfile", file.path(indir, name), "--check-sex",
           "--out", file.path(qcdir, name))
   }
@@ -309,6 +327,55 @@ precompute_plink_files <- function() {
   message("All PLINK pre-computation files ready.")
 }
 
+# --- Section 5b: Demographics-based sex check --------------------------------
+# Replaces plinkQC's chrX-based --check-sex. Individuals whose recorded sex in
+# the demographics table disagrees with the FAM file are written to
+# <name>.fail-sex.IDs and removed from the cleaned output. FAM IID is matched
+# against the Subject column; Gender M/F maps to PLINK 1/2.
+
+compute_sex_fail_from_demographics <- function() {
+  if (!file.exists(demographics_path)) {
+    stop("Demographics file not found: ", demographics_path)
+  }
+
+  message("")
+  message("Running sex check against demographics table...")
+  message("  Demographics: ", demographics_path)
+
+  demo <- fread(demographics_path)
+  if (!all(c("Subject", "Gender") %in% colnames(demo))) {
+    stop("Demographics file must contain 'Subject' and 'Gender' columns")
+  }
+
+  demo_sex <- ifelse(demo$Gender == "M", 1L,
+              ifelse(demo$Gender == "F", 2L, NA_integer_))
+  demo_lookup <- data.table(IID = as.character(demo$Subject),
+                            demo_sex = demo_sex)
+
+  fam <- fread(file.path(indir, paste0(name, ".fam")), header = FALSE,
+               colClasses = list(character = 1:2))
+  setnames(fam, c("FID", "IID", "PID", "MID", "fam_sex", "PHENO"))
+
+  merged <- merge(fam, demo_lookup, by = "IID", all.x = TRUE)
+  fail_sex <- merged[!is.na(demo_sex) &
+                       fam_sex %in% c(1L, 2L) &
+                       fam_sex != demo_sex,
+                     .(FID, IID)]
+
+  fail_path <- file.path(qcdir, paste0(name, ".fail-sex.IDs"))
+  write.table(fail_sex, file = fail_path,
+              sep = " ", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+  n_no_demo <- sum(is.na(merged$demo_sex))
+  message("  Individuals without demographics sex: ", n_no_demo)
+  message("  Individuals with mismatched sex (FAM vs demographics): ",
+          nrow(fail_sex))
+  message("  Wrote: ", fail_path)
+
+  return(list(fail_sex = fail_sex, n_missing_demo = n_no_demo,
+              fail_path = fail_path))
+}
+
 # --- Section 6: Per-individual QC ---------------------------------------------
 
 run_per_individual_qc <- function() {
@@ -317,6 +384,8 @@ run_per_individual_qc <- function() {
   message("Running per-individual QC...")
   message("=============================================================")
 
+  use_chrx <- sex_check_method == "chrx"
+
   fail_individuals <- perIndividualQC(
     indir           = indir,
     name            = name,
@@ -324,8 +393,9 @@ run_per_individual_qc <- function() {
     path2plink      = path2plink,
     path2plink2     = path2plink2,
 
-    # Sex check
-    dont.check_sex  = FALSE,
+    # Sex check: chrX-based via plinkQC when sex_check_method == "chrx",
+    # otherwise skipped here and handled by compute_sex_fail_from_demographics.
+    dont.check_sex  = !use_chrx,
     maleTh          = 0.8,
     femaleTh        = 0.2,
 
@@ -478,7 +548,10 @@ run_clean_data <- function(do_ancestry) {
     path2plink  = path2plink,
 
     # Individual filters
-    filterSex               = TRUE,
+    # filterSex: TRUE for chrX mode (plinkQC consumes the .sexcheck output);
+    # FALSE for demographics mode (we apply --remove after cleanData using
+    # the demographics-based fail list).
+    filterSex               = sex_check_method == "chrx",
     filterHeterozygosity    = TRUE,
     filterSampleMissingness = TRUE,
     filterRelated           = FALSE,
@@ -534,22 +607,45 @@ main <- function() {
   # --- Per-individual QC ---
   fail_individuals <- run_per_individual_qc()
 
-  # Extract failure counts
-  n_sex_fail   <- length(fail_individuals$fail_sex$FID)
-  n_het_fail   <- length(fail_individuals$fail_het_imiss$FID)
-  n_rel_fail   <- length(fail_individuals$fail_relatedness$FID)
+  # --- Sex check ---
+  if (sex_check_method == "demographics") {
+    sex_check <- compute_sex_fail_from_demographics()
+    n_sex_fail         <- nrow(sex_check$fail_sex)
+    n_sex_missing_demo <- sex_check$n_missing_demo
+    sex_label          <- "demographics"
+  } else {
+    sex_check <- NULL
+    n_sex_fail         <- length(fail_individuals$fail_sex$FID)
+    n_sex_missing_demo <- NA_integer_
+    sex_label          <- "chrX"
+  }
+
+  # Extract remaining failure counts
+  n_het_fail <- length(fail_individuals$fail_het_imiss$FID)
+  n_rel_fail <- length(fail_individuals$fail_relatedness$FID)
 
   message("")
   message("Per-individual QC results:")
-  message("  Failed sex check:       ", n_sex_fail)
-  message("  Failed het/missingness:  ", n_het_fail)
-  message("  Failed relatedness:      ", n_rel_fail)
+  message("  Failed sex check (", sex_label, "): ", n_sex_fail)
+  if (sex_check_method == "demographics") {
+    message("  Without demographics sex:        ", n_sex_missing_demo)
+  }
+  message("  Failed het/missingness:          ", n_het_fail)
+  message("  Failed relatedness:              ", n_rel_fail)
 
   report_lines <- c(report_lines,
     "PER-INDIVIDUAL QC:",
-    paste("  Failed sex check:      ", n_sex_fail),
-    paste("  Failed het/missingness:", n_het_fail),
-    paste("  Failed relatedness:    ", n_rel_fail)
+    paste0("  Sex-check method:               ", sex_label),
+    paste0("  Failed sex check (", sex_label, "):", strrep(" ", max(0, 12 - nchar(sex_label))), n_sex_fail)
+  )
+  if (sex_check_method == "demographics") {
+    report_lines <- c(report_lines,
+      paste("  Without demographics sex:       ", n_sex_missing_demo)
+    )
+  }
+  report_lines <- c(report_lines,
+    paste("  Failed het/missingness:         ", n_het_fail),
+    paste("  Failed relatedness:             ", n_rel_fail)
   )
 
   # Overview plot
@@ -664,8 +760,32 @@ main <- function() {
   # --- Combined cleanup ---
   clean <- run_clean_data(do_ancestry = ancestry_done)
 
-  # Count final samples and SNPs
+  # --- Apply demographics-based sex filter to the cleaned data ---
+  # (chrX mode is already handled by cleanData via filterSex = TRUE.)
   clean_prefix <- file.path(qcdir, paste0(name, ".clean"))
+  if (sex_check_method == "demographics" &&
+      n_sex_fail > 0 &&
+      file.exists(paste0(clean_prefix, ".bed"))) {
+    message("")
+    message("Applying demographics-based sex filter (--remove ", n_sex_fail, " IDs)...")
+    tmp_prefix <- file.path(qcdir, paste0(name, ".clean.sexfilt"))
+    system2(path2plink, args = c(
+      "--bfile", clean_prefix,
+      "--remove", sex_check$fail_path,
+      "--make-bed",
+      "--out", tmp_prefix
+    ))
+    for (ext in c(".bed", ".bim", ".fam")) {
+      src <- paste0(tmp_prefix, ext)
+      dst <- paste0(clean_prefix, ext)
+      if (file.exists(src)) {
+        if (file.exists(dst)) file.remove(dst)
+        file.rename(src, dst)
+      }
+    }
+  }
+
+  # Count final samples and SNPs
   if (file.exists(paste0(clean_prefix, ".bim"))) {
     final_bim <- fread(paste0(clean_prefix, ".bim"), header = FALSE)
     final_fam <- fread(paste0(clean_prefix, ".fam"), header = FALSE)
@@ -694,8 +814,13 @@ main <- function() {
     "THRESHOLDS USED:",
     paste("  Sample missingness (imissTh):", imissTh),
     paste("  Heterozygosity SD (hetTh):   ", hetTh),
-    paste("  Male F threshold:            ", 0.8),
-    paste("  Female F threshold:          ", 0.2),
+    paste("  Sex-check method:            ", sex_check_method),
+    paste("  Sex source (demographics):   ",
+          if (sex_check_method == "demographics") demographics_path else "n/a (chrX)"),
+    paste("  Male F threshold (chrX):     ",
+          if (sex_check_method == "chrx") 0.8 else "n/a"),
+    paste("  Female F threshold (chrX):   ",
+          if (sex_check_method == "chrx") 0.2 else "n/a"),
     paste("  IBD threshold (highIBDTh):   ", highIBDTh),
     paste("  MAF for relatedness:         ", 0.1),
     paste("  SNP missingness (lmissTh):   ", lmissTh),

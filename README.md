@@ -22,9 +22,12 @@ The pipeline integrates three data modalities:
   in graph measures of integration and segregation.
 
 
-These are tested both by group comparison (low / middle / high PGS) and by
-formal heteroscedasticity tests on the continuous PGS (Breusch–Pagan, White,
-quantile regression).
+These are tested via formal heteroscedasticity analyses on the continuous
+PGS (Breusch–Pagan, White, quantile regression, decile-SD trends, and a
+balanced bootstrap variance test). The primary test is a generalised
+Breusch–Pagan with a `pgs_z × sex` interaction on the squared residuals
+(does the PGS→variance slope differ by sex?), supported by sex-stratified
+versions of the decile-SD and balanced-variance tests.
 
 ## Repository layout
 
@@ -43,10 +46,7 @@ code/
   C1_run_univariate_fMRI_prediction.py      # Edge-wise connectivity ~ social / PGS
   C2_find_communities_fMRI.py               # Consensus community detection
   C2b_evaluate_communities.py               # Parcellation resolution tuning
-  C3_perform_main_landscape_analysis.py     # Main landscape / graph-theory tests
-  C3b_continuous_heteroscedasticity_analysis.py  # Continuous BP / White / quantile tests
-  C5_visualize_networks.py                  # Bootstrap ellipses + network figures
-  generate_publication_figures.py           # Standalone publication SVGs
+  C3_continuous_heteroscedasticity_analysis.py   # Continuous BP / White / quantile + sex × PGS variance tests
 
   utils/                              # Shared helpers (ID tracking, connectome viz, …)
 
@@ -120,8 +120,7 @@ Outputs are written to `project_dir/{results,reports,figures,logs}/`:
 - `results/` — numeric results (CSV): factor scores, PGS residuals, partitions,
   graph-theory metrics, heteroscedasticity tests, data-retention tracking.
 - `reports/` — per-step text reports summarising what ran and key statistics.
-- `figures/` — per-step PNGs. `figures/publication/` contains standalone SVGs
-  produced by `generate_publication_figures.py`.
+- `figures/` — per-step PNGs.
 - `logs/` — one log file per Snakemake rule.
 
 ## Reproducibility notes
@@ -135,10 +134,9 @@ Outputs are written to `project_dir/{results,reports,figures,logs}/`:
   The selected partition is written to a stable filename
   (`C2b_selected_partition.csv`) so downstream steps inherit it without
   repeating the parameter search.
-- Landscape analysis (C3, C3b, C5) runs at the single parcellation chosen
-  by C2b — `n_nodes` is derived from the selected partition. Robustness is
-  assessed across edge thresholds only (0.15 / 0.20 / 0.25) in
-  [C3_perform_main_landscape_analysis.py](C3_perform_main_landscape_analysis.py).
+- Heteroscedasticity analysis (C3) runs at the single parcellation chosen
+  by C2b — `n_nodes` is derived from the selected partition. See
+  [C3_continuous_heteroscedasticity_analysis.py](C3_continuous_heteroscedasticity_analysis.py).
 
 ## Citation
 

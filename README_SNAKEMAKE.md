@@ -106,9 +106,8 @@ snakemake --cores 1 --use-conda preprocess_phenotypic
 1. `univariate_fmri_prediction` - Univariate prediction models
 2. `multivariate_fmri_prediction` - Multivariate prediction models
 3. `find_fmri_communities` - Network community detection
-4. `main_landscape_analysis` - Main landscape analysis
-5. `sensitivity_landscape_analysis` - Sensitivity analysis
-6. `visualize_networks` - Generate network visualizations
+4. `evaluate_parcellations` - Parcellation resolution tuning (C2b)
+5. `continuous_heteroscedasticity_analysis` - Continuous BP / White / quantile tests + sex × PGS variance tests (C3)
 
 ### Quality Control
 - `check_data_retention` - Track subject IDs across pipeline steps

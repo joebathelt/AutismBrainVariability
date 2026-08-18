@@ -11,10 +11,12 @@ DATA_DIR = f"{PROJECT_DIR}/data"
 CODE_DIR = f"{PROJECT_DIR}/code"
 GENETICS_INPUT_DIR = f"{DATA_DIR}/raw_anonymised"  # Original genetics data (read-only)
 PLINK_DIR = f"{DATA_DIR}/PLINK_anonymised"        # PLINK working directory (outputs)
+PREFILTER_INDIR = f"{PLINK_DIR}/prefilter"        # Sex-prefiltered genotypes (B1 input)
 QCDIR = f"{DATA_DIR}/plinkQC_output"              # B1 plinkQC output directory
 RESULTS_DIR = f"{PROJECT_DIR}/results"
 LOGS_DIR = f"{PROJECT_DIR}/logs"
 GCTA_PATH = config.get("gcta_path", "/opt/gcta")
+PREFILTER_DROP_SEX = config.get("prefilter_drop_sex", "")
 
 # Final target outputs
 rule all:
@@ -45,20 +47,20 @@ rule all:
         f"{RESULTS_DIR}/C2b_parcellation_evaluation.csv",
         f"{RESULTS_DIR}/C2b_selected_partition.csv",
         f"{PROJECT_DIR}/figures/C2b_parcellation_tuning_curves.png",
-        f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
-        f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
-        f"{RESULTS_DIR}/C4_main_network_metrics.csv",
-        f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
-        f"{RESULTS_DIR}/C3b_heteroscedasticity_results.csv",
-        f"{RESULTS_DIR}/C4_sensitivity_summary.csv",
-        f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
-        f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png",
+        f"{PROJECT_DIR}/reports/C3_continuous_heteroscedasticity_report.txt",
+        f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
+
+        # Phase D: Publication figures
+        f"{PROJECT_DIR}/figures/D2_quintile_cv_by_sex.png",
+        f"{PROJECT_DIR}/figures/D2_modularity_efficiency_kde_by_pgs.png",
+        f"{PROJECT_DIR}/figures/D2_social_metric_association.png",
+        f"{RESULTS_DIR}/D2_quintile_cv_by_sex.csv",
+        f"{PROJECT_DIR}/reports/D2_publication_figures_report.txt",
+        f"{PROJECT_DIR}/manuscript/figures/Figure_Variability.pdf",
+        f"{PROJECT_DIR}/reports/D3_variability_figure_report.txt",
 
         # Data quality check
-        f"{RESULTS_DIR}/DataRetention_Overview.csv",
-
-        # Publication figures
-        f"{PROJECT_DIR}/figures/publication/fig_pgs_social_scatter.svg"
+        f"{RESULTS_DIR}/DataRetention_Overview.csv"
 
 
 # ============================================================================
@@ -137,19 +139,66 @@ rule evaluate_social_factor:
 # Phase B: Genetic/PGS Analysis
 # ============================================================================
 
+rule prefilter_genotypes_by_sex:
+    """Optional sex prefilter applied at the start of the genotype pipeline.
+    Configured via prefilter_drop_sex: "F" drops females (reproduces the
+    broken chrX filter behaviour), "M" drops males, "" passes the file through
+    unchanged. NOTE: when toggling this flag, also clear the QCDIR cache
+    (B1 reuses cached PLINK files) — e.g. `rm -rf data/plinkQC_output/*`."""
+    input:
+        bed=f"{GENETICS_INPUT_DIR}/Neuro_Chip_anonymised.bed",
+        bim=f"{GENETICS_INPUT_DIR}/Neuro_Chip_anonymised.bim",
+        fam=f"{GENETICS_INPUT_DIR}/Neuro_Chip_anonymised.fam"
+    output:
+        bed=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.bed",
+        bim=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.bim",
+        fam=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.fam"
+    params:
+        drop_sex=PREFILTER_DROP_SEX,
+        in_prefix=f"{GENETICS_INPUT_DIR}/Neuro_Chip_anonymised",
+        out_prefix=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised"
+    log:
+        f"{LOGS_DIR}/B0_prefilter_genotypes_by_sex.log"
+    shell:
+        """
+        mkdir -p {PREFILTER_INDIR}
+        case "{params.drop_sex}" in
+            F)  echo "Dropping females (--filter-males)" > {log}
+                plink --bfile {params.in_prefix} --filter-males \
+                      --make-bed --out {params.out_prefix} >> {log} 2>&1 ;;
+            M)  echo "Dropping males (--filter-females)" > {log}
+                plink --bfile {params.in_prefix} --filter-females \
+                      --make-bed --out {params.out_prefix} >> {log} 2>&1 ;;
+            "") echo "prefilter_drop_sex empty - passing raw genotypes through" > {log}
+                cp {input.bed} {output.bed}
+                cp {input.bim} {output.bim}
+                cp {input.fam} {output.fam} ;;
+            *)  echo "ERROR: prefilter_drop_sex must be 'F', 'M', or '' (got '{params.drop_sex}')" >&2
+                exit 1 ;;
+        esac
+        """
+
+
 rule plinkqc_genotype_qc:
     """Genotype quality control using plinkQC (B1)"""
     input:
-        bfile=f"{GENETICS_INPUT_DIR}/Neuro_Chip_anonymised.bed"
+        bed=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.bed",
+        bim=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.bim",
+        fam=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.fam"
     output:
         clean_bed=f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
         report=f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt"
+    params:
+        sex_check_method=config.get("sex_check_method", "demographics"),
+        indir_rel="data/PLINK_anonymised/prefilter"
     log:
         f"{LOGS_DIR}/B1_plinkqc_genotype_qc.log"
     shell:
         """
         Rscript {CODE_DIR}/B1_plinkQC_genotype_qc.R \
-            --project {PROJECT_DIR} > {log} 2>&1
+            --project {PROJECT_DIR} \
+            --indir {params.indir_rel} \
+            --sex-check-method {params.sex_check_method} > {log} 2>&1
         """
 
 
@@ -361,51 +410,6 @@ rule evaluate_parcellations:
             --target-communities {params.target_communities} > {log} 2>&1
         """
 
-
-rule main_landscape_analysis:
-    """Main landscape analysis at the C2b-selected parcellation, with
-    threshold sensitivity."""
-    input:
-        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
-        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
-        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
-        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
-        movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
-        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
-        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv"
-    output:
-        report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
-        results=f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
-        summary=f"{RESULTS_DIR}/C4_sensitivity_summary.csv",
-        main_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv"
-    params:
-        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
-        motion_threshold=config.get("motion_threshold", 0.2),
-        thresholds="0.15 0.20 0.25"
-    conda:
-        "environment.yml"
-    threads: config.get("threads", 4)
-    resources:
-        mem_mb=config.get("mem_mb", 16000)
-    log:
-        f"{LOGS_DIR}/C3_main_landscape.log"
-    shell:
-        """
-        python {CODE_DIR}/C3_perform_main_landscape_analysis.py \
-            --project {PROJECT_DIR} \
-            --pgs {input.pgs} \
-            --social {input.social} \
-            --behavioural {input.behavioural} \
-            --phenotypic {input.phenotypic} \
-            --movement {input.movement} \
-            --ids {input.ids} \
-            --matrices-dir {params.matrices_dir} \
-            --partition {input.partition} \
-            --thresholds {params.thresholds} \
-            --motion-threshold {params.motion_threshold} > {log} 2>&1
-        """
-
-
 rule continuous_heteroscedasticity_analysis:
     """Continuous heteroscedasticity analysis at the C2b-selected parcellation."""
     input:
@@ -415,11 +419,10 @@ rule continuous_heteroscedasticity_analysis:
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
         movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
-        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
-        main_report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt"
+        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv"
     output:
-        report=f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
-        results=f"{RESULTS_DIR}/C3b_heteroscedasticity_results.csv"
+        report=f"{PROJECT_DIR}/reports/C3_continuous_heteroscedasticity_report.txt",
+        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv"
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
@@ -430,10 +433,10 @@ rule continuous_heteroscedasticity_analysis:
     resources:
         mem_mb=config.get("mem_mb", 16000)
     log:
-        f"{LOGS_DIR}/C3b_continuous_heteroscedasticity.log"
+        f"{LOGS_DIR}/C3_continuous_heteroscedasticity.log"
     shell:
         """
-        python {CODE_DIR}/C3b_continuous_heteroscedasticity_analysis.py \
+        python {CODE_DIR}/C3_continuous_heteroscedasticity_analysis.py \
             --project {PROJECT_DIR} \
             --pgs {input.pgs} \
             --social {input.social} \
@@ -448,68 +451,70 @@ rule continuous_heteroscedasticity_analysis:
         """
 
 
-rule visualize_networks:
-    """Visualize network results at the C2b-selected parcellation."""
+# ============================================================================
+# Phase D: Publication Figures
+# ============================================================================
+
+rule publication_figures_d2:
+    """Per-quintile CV by sex and modularity x global-efficiency KDE
+    contours per PGS quintile (D2)."""
     input:
-        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
-        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
-        graph_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv",
-        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
-        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
+        variance_regression=f"{RESULTS_DIR}/C3_variance_regression_sex.csv"
     output:
-        report=f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
-        ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
+        cv_fig=f"{PROJECT_DIR}/figures/D2_quintile_cv_by_sex.png",
+        kde_fig=f"{PROJECT_DIR}/figures/D2_modularity_efficiency_kde_by_pgs.png",
+        social_fig=f"{PROJECT_DIR}/figures/D2_social_metric_association.png",
+        cv_csv=f"{RESULTS_DIR}/D2_quintile_cv_by_sex.csv",
+        report=f"{PROJECT_DIR}/reports/D2_publication_figures_report.txt"
     params:
-        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
-        n_bootstrap=config.get("n_bootstrap", 1000),
-        sample_size=config.get("bootstrap_sample_size", 90)
+        n_bootstrap=config.get("d2_n_bootstrap", 1000),
+        seed=config.get("d2_seed", 42)
     conda:
         "environment.yml"
     log:
-        f"{LOGS_DIR}/C5_visualize_networks.log"
+        f"{LOGS_DIR}/D2_publication_figures.log"
     shell:
         """
-        python {CODE_DIR}/C5_visualize_networks.py \
+        python {CODE_DIR}/D2_publication_figures.py \
             --project {PROJECT_DIR} \
-            --pgs {input.pgs} \
-            --social {input.social} \
-            --graph-metrics {input.graph_metrics} \
-            --partition {input.partition} \
-            --ids {input.ids} \
-            --matrices-dir {params.matrices_dir} \
+            --input {input.results} \
+            --interaction-stats {input.variance_regression} \
             --n-bootstrap {params.n_bootstrap} \
-            --sample-size {params.sample_size} > {log} 2>&1
+            --seed {params.seed} > {log} 2>&1
         """
 
 
-rule generate_publication_figures:
-    """Generate standalone publication-ready SVG figures"""
+rule variability_figure_d3:
+    """Pooled modularity-variability figure (panels a-f) on the male subsample.
+    Recreates the presentation of the original Figure_2.pdf, correctly
+    restricted to males (Gender == 'M'), and writes it to the manuscript's
+    variability-figure slot (figures/Figure_Variability.pdf). Pooled by PGS
+    group (Low/Middle/High) rather than sex-stratified like D2."""
     input:
-        graph_metrics=f"{RESULTS_DIR}/C4_main_network_metrics.csv",
-        ellipse_plot=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
+        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv"
     output:
-        fig1=f"{PROJECT_DIR}/figures/publication/fig_pgs_social_scatter.svg",
-        fig2=f"{PROJECT_DIR}/figures/publication/fig_pgs_distribution.svg",
-        fig3=f"{PROJECT_DIR}/figures/publication/fig_pgs_group_boxplot.svg",
-        fig4=f"{PROJECT_DIR}/figures/publication/fig_modularity_social_scatter.svg",
-        fig5=f"{PROJECT_DIR}/figures/publication/fig_modularity_variability_bar.svg",
-        fig6=f"{PROJECT_DIR}/figures/publication/fig_efficiency_variability_bar.svg",
-        fig7=f"{PROJECT_DIR}/figures/publication/fig_network_organization_space.svg",
-        fig8=f"{PROJECT_DIR}/figures/publication/fig_compensation_strategies.svg",
-        fig9=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_modularity.svg",
-        fig10=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_density_global_efficiency.svg",
-        fig11=f"{PROJECT_DIR}/figures/publication/fig_bootstrap_ellipse_extent.svg"
+        fig=f"{PROJECT_DIR}/figures/D3_variability_figure_m.pdf",
+        manuscript_fig=f"{PROJECT_DIR}/manuscript/figures/Figure_Variability.pdf",
+        report=f"{PROJECT_DIR}/reports/D3_variability_figure_report.txt"
     params:
-        results_file=f"{RESULTS_DIR}/C4_main_network_metrics.csv"
+        sex=config.get("variability_figure_sex", "M"),
+        n_bootstrap=config.get("d3_n_bootstrap", 1000),
+        seed=config.get("d3_seed", 42)
     conda:
         "environment.yml"
     log:
-        f"{LOGS_DIR}/generate_publication_figures.log"
+        f"{LOGS_DIR}/D3_variability_figure.log"
     shell:
         """
-        python {CODE_DIR}/generate_publication_figures.py \
+        python {CODE_DIR}/D3_variability_figure.py \
             --project {PROJECT_DIR} \
-            --results-file {params.results_file} > {log} 2>&1
+            --input {input.results} \
+            --sex {params.sex} \
+            --output {output.fig} \
+            --manuscript-output {output.manuscript_fig} \
+            --n-bootstrap {params.n_bootstrap} \
+            --seed {params.seed} > {log} 2>&1
         """
 
 
@@ -584,8 +589,8 @@ rule clean:
         rm -f {PROJECT_DIR}/reports/C1_*.txt
         rm -f {PROJECT_DIR}/reports/C2_*.txt
         rm -f {PROJECT_DIR}/reports/C3_*.txt
-        rm -f {PROJECT_DIR}/reports/C3b_*.txt
-        rm -f {PROJECT_DIR}/reports/C5_*.txt
+        rm -f {PROJECT_DIR}/reports/D2_*.txt
+        rm -f {PROJECT_DIR}/figures/D2_*.png
         rm -f {PROJECT_DIR}/figures/A1_*.png
         rm -f {PROJECT_DIR}/figures/A2_*.png
         rm -f {PROJECT_DIR}/figures/A3_*.png
@@ -595,25 +600,30 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/C1_*.png
         rm -f {PROJECT_DIR}/figures/C2_*.png
         rm -f {PROJECT_DIR}/figures/C3_*.png
-        rm -f {PROJECT_DIR}/figures/C3b_*.png
-        rm -f {PROJECT_DIR}/figures/C4_*.png
-        rm -f {PROJECT_DIR}/figures/C5_*.png
-        rm -f {DATA_DIR}/C5_*.npy
 
         # Bezier connectome plots from C1 (not prefixed with C1_)
         rm -f {PROJECT_DIR}/figures/*_positive.png
         rm -f {PROJECT_DIR}/figures/*_negative.png
         rm -f {PROJECT_DIR}/figures/*_surf.png
 
-        # Stale pre-rename outputs (B0->B1, B2->B3, B4->B5)
+        # Stale pre-rename / retired-rule outputs
+        # (B0->B1, B2->B3, B4->B5; retired: visualize_networks (C4/C5),
+        # main_landscape_analysis (C3 perform), generate_publication_figures)
         rm -f {PROJECT_DIR}/reports/B0_*.txt
         rm -f {PROJECT_DIR}/reports/B2_*.txt
         rm -f {PROJECT_DIR}/reports/B4_*.txt
+        rm -f {PROJECT_DIR}/reports/C4_*.txt
+        rm -f {PROJECT_DIR}/reports/C5_*.txt
         rm -f {PROJECT_DIR}/figures/B0_*.png
         rm -f {PROJECT_DIR}/figures/B2_*.png
         rm -f {PROJECT_DIR}/figures/B4_*.png
-
-        # Publication figures
+        rm -f {PROJECT_DIR}/figures/C4_*.png
+        rm -f {PROJECT_DIR}/figures/C5_*.png
+        rm -f {DATA_DIR}/C4_*.npy
+        rm -f {DATA_DIR}/C5_*.npy
+        rm -f {RESULTS_DIR}/C4_main_network_metrics.csv
+        rm -f {RESULTS_DIR}/C4_sensitivity_summary.csv
+        rm -f {RESULTS_DIR}/C3_graph_theory_landscape_results.csv
         rm -rf {PROJECT_DIR}/figures/publication/
 
         # Logs

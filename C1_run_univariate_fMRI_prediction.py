@@ -4,11 +4,11 @@ Connectivity Analysis Pipeline for Social Difficulty and Polygenic Risk
 ========================================================================
 
 This script performs edge-wise statistical analyses on brain connectivity data
-to examine associations with social difficulty scores and polygenic scores.
-Includes three-group comparisons based on polygenic score thresholds:
-- Low PGS: <-1 SD
-- Middle PGS: >-0.5 SD & <0.5 SD
-- High PGS: >1 SD
+to examine associations with social difficulty scores and polygenic scores
+on the continuous PGS. Per-edge tests:
+  - connectivity ~ social difficulty
+  - connectivity ~ PGS
+  - (connectivity × PGS) ~ social difficulty (interaction)
 """
 
 # %%
@@ -23,8 +23,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from neuromaps.datasets import fetch_fslr
 import seaborn as sns
-from scipy.stats import zscore, pearsonr, ttest_ind
-import statsmodels.formula.api as smf
+from scipy.stats import zscore, pearsonr
 from statsmodels.stats.multitest import multipletests
 from sklearn.preprocessing import RobustScaler
 from sklearn.linear_model import LinearRegression
@@ -49,8 +48,8 @@ def _read_csv_retry(path, max_retries=5, delay=1.0, **kwargs):
 
 # Set up plotting parameters
 from matplotlib import rcParams
-rcParams['font.family'] = 'serif'
-rcParams['font.serif'] = ['CMU']
+rcParams['font.sans-serif'] = ['Helvetica', 'Nimbus Sans',
+                               'Liberation Sans', 'Arial']
 rcParams['text.usetex'] = True
 rcParams['axes.labelsize'] = 9
 rcParams['xtick.labelsize'] = 9
@@ -181,65 +180,6 @@ def perform_univariate_analysis(X_conn_residuals, y, alpha=0.05):
         'significant': reject,
         'n_significant': np.sum(reject),
         'significant_indices': np.where(reject)[0]
-    }
-
-    return results
-
-
-def perform_group_comparison(X_conn_residuals, group1_mask, group2_mask, alpha=0.05):
-    """
-    Perform group comparison analysis using t-tests with FDR correction.
-
-    Parameters:
-    -----------
-    X_conn_residuals : array-like, shape (n_samples, n_features)
-        Residualised connectivity features
-    group1_mask : array-like, shape (n_samples,)
-        Boolean mask for group 1 subjects
-    group2_mask : array-like, shape (n_samples,)
-        Boolean mask for group 2 subjects
-    alpha : float, default=0.05
-        Significance threshold
-
-    Returns:
-    --------
-    results : dict
-        Dictionary containing group comparison results
-    """
-    n_features = X_conn_residuals.shape[1]
-    t_stats = np.zeros(n_features)
-    ps = np.zeros(n_features)
-    effect_sizes = np.zeros(n_features)
-
-    # Perform t-tests for each feature
-    for i in range(n_features):
-        group1_data = X_conn_residuals[group1_mask, i]
-        group2_data = X_conn_residuals[group2_mask, i]
-        
-        # Two-sample t-test
-        t_stat, p_val = ttest_ind(group1_data, group2_data)
-        t_stats[i] = t_stat
-        ps[i] = p_val
-        
-        # Cohen's d effect size
-        pooled_std = np.sqrt(((len(group1_data) - 1) * np.var(group1_data, ddof=1) + 
-                             (len(group2_data) - 1) * np.var(group2_data, ddof=1)) / 
-                             (len(group1_data) + len(group2_data) - 2))
-        effect_sizes[i] = (np.mean(group1_data) - np.mean(group2_data)) / pooled_std
-
-    # Apply FDR correction
-    reject, p_corr, _, _ = multipletests(ps, method='fdr_bh', alpha=alpha)
-
-    results = {
-        't_statistics': t_stats,
-        'p_values': ps,
-        'p_corrected': p_corr,
-        'effect_sizes': effect_sizes,
-        'significant': reject,
-        'n_significant': np.sum(reject),
-        'significant_indices': np.where(reject)[0],
-        'group1_n': np.sum(group1_mask),
-        'group2_n': np.sum(group2_mask)
     }
 
     return results
@@ -500,7 +440,7 @@ def create_social_difficulty_visualizations(results_nodes, n_nodes, project_fold
 
         # Bezier connectome plot
         filename = (project_folder /
-                    f'figures/Connectome_sign_nodes-{n_nodes}_stat-corr_{sign}.png')
+                    f'figures/C1_Connectome_sign_nodes-{n_nodes}_stat-corr_{sign}.png')
         create_bezier_connectome_plot(matrix, n_nodes, project_folder,
                                       filename, colors[sign], sign)
     
@@ -509,80 +449,13 @@ def create_social_difficulty_visualizations(results_nodes, n_nodes, project_fold
     node_vector = matrix_all.sum(axis=0)
 
     filename = (project_folder /
-                f'figures/Connectome_sign_nodes-{n_nodes}_stat-corr_surf.png')
+                f'figures/C1_Connectome_sign_nodes-{n_nodes}_stat-corr_surf.png')
     try:
         create_surface_plot(node_vector, n_nodes, project_folder, filename,
                             color_range=(-0.5, 0.5), cbar_label='Correlation Sum')
     except Exception as e:
         print(f"Error creating surface plot for social difficulty "
               f"({n_nodes}-node): {e}")
-
-
-def create_group_split_visualizations(results_nodes, n_nodes, project_folder):
-    """
-    Create visualizations for three-group split analyses.
-
-    Parameters:
-    -----------
-    results_nodes : dict
-        Results for specific parcellation
-    n_nodes : int
-        Number of nodes
-    project_folder : Path
-        Project directory path
-    """
-    group_splits = results_nodes['group_splits']
-
-    # Visualization parameters for different metrics
-    viz_params = {
-        't_statistics': {'cmap': 'coolwarm', 'suffix': 'tstat',
-                         'label': 't-statistic'},
-        'effect_sizes': {'cmap': 'RdBu_r', 'suffix': 'cohend',
-                         'color_range': (-1, 1), 'label': "Cohen's d"}
-    }
-
-    comparison_names = ['low_vs_middle', 'high_vs_middle', 'low_vs_high']
-
-    for comparison_name in comparison_names:
-        if comparison_name not in group_splits:
-            continue
-
-        comparison_data = group_splits[comparison_name]
-        results = comparison_data['results']
-
-        if results['n_significant'] == 0:
-            print(f"No significant connections for {comparison_name} "
-                  f"comparison ({n_nodes}-node)")
-            continue
-
-        indices = results['significant_indices']
-
-        for metric, params in viz_params.items():
-            values = results[metric][indices]
-
-            # Create connectivity matrix and sum for node vector
-            matrix = create_connectivity_matrix(indices, values, n_nodes)
-            node_vector = matrix.sum(axis=0)
-
-            # Set color range
-            color_range = params.get('color_range')
-            if color_range is None:
-                max_val = np.max(np.abs(values))
-                color_range = ((-max_val, max_val) if max_val > 0
-                               else (-1, 1))
-
-            # Create surface plot
-            filename = (project_folder /
-                        f'figures/GroupSplit_{comparison_name}_nodes-{n_nodes}_{params["suffix"]}_surf.png')
-            try:
-                create_surface_plot(node_vector, n_nodes, project_folder,
-                                    filename, cmap=params['cmap'],
-                                    color_range=color_range,
-                                    cbar_label=params['label'])
-            except Exception as e:
-                print(f"Error creating surface plot for "
-                      f"{comparison_name} ({n_nodes}-node, "
-                      f"{params['suffix']}): {e}")
 
 
 # %%
@@ -592,8 +465,7 @@ def create_group_split_visualizations(results_nodes, n_nodes, project_folder):
 
 class ConnectivityAnalysis:
     """
-    Class for conducting edge-wise connectivity analyses with three-group
-    comparisons.
+    Class for conducting edge-wise connectivity analyses on the continuous PGS.
     """
 
     def __init__(self, project_folder, parcellation_sizes=[50, 100, 200],
@@ -762,19 +634,6 @@ class ConnectivityAnalysis:
         # Compute interaction terms
         X_interaction = compute_interaction_terms(X_conn_residuals, pgs_scaled)
 
-        # Create three group masks based on polygenic scores
-        pgs_mean = np.mean(pgs_scaled)
-        pgs_std = np.std(pgs_scaled)
-
-        # Three groups:
-        # Low PGS: < -1 SD
-        # Middle PGS: > -0.5 SD & < 0.5 SD
-        # High PGS: > +1 SD
-        low_pgs_mask = pgs_scaled < (pgs_mean - 1 * pgs_std)
-        middle_pgs_mask = ((pgs_scaled > (pgs_mean - 0.5 * pgs_std)) &
-                           (pgs_scaled < (pgs_mean + 0.5 * pgs_std)))
-        high_pgs_mask = pgs_scaled > (pgs_mean + 1 * pgs_std)
-
         analysis_data = {
             'X_conn_residuals': X_conn_residuals,
             'X_interaction': X_interaction,
@@ -783,9 +642,6 @@ class ConnectivityAnalysis:
             'merged_df': merged_df,
             'n_connections': len(conn_features),
             'n_subjects': len(merged_df),
-            'low_pgs_mask': low_pgs_mask,
-            'middle_pgs_mask': middle_pgs_mask,
-            'high_pgs_mask': high_pgs_mask
         }
 
         return analysis_data
@@ -850,106 +706,6 @@ class ConnectivityAnalysis:
 
         return results
 
-    def run_three_group_analysis(self, analysis_data):
-        """
-        Run three-group comparisons: Low vs Middle, High vs Middle, Low vs High.
-
-        Parameters:
-        -----------
-        analysis_data : dict
-            Prepared data dictionary
-
-        Returns:
-        --------
-        results : dict
-            Three-group comparison results
-        """
-        print("\nRunning three-group analyses...")
-
-        X_conn_residuals = analysis_data['X_conn_residuals']
-        low_pgs_mask = analysis_data['low_pgs_mask']
-        middle_pgs_mask = analysis_data['middle_pgs_mask']
-        high_pgs_mask = analysis_data['high_pgs_mask']
-        y_social_scaled = analysis_data['y_social_scaled']
-
-        print(f"Group sizes - Low PGS (<-1 SD): {np.sum(low_pgs_mask)}")
-        print(f"Group sizes - Middle PGS (>-0.5 SD & <0.5 SD): "
-              f"{np.sum(middle_pgs_mask)}")
-        print(f"Group sizes - High PGS (>+1 SD): {np.sum(high_pgs_mask)}")
-
-        # Low vs Middle comparison
-        print("\nLow PGS vs Middle PGS comparison...")
-        low_vs_middle_results = perform_group_comparison(
-            X_conn_residuals,
-            low_pgs_mask,
-            middle_pgs_mask
-        )
-        print(f"Significant differences after FDR correction: "
-              f"{low_vs_middle_results['n_significant']}")
-
-        # High vs Middle comparison
-        print("\nHigh PGS vs Middle PGS comparison...")
-        high_vs_middle_results = perform_group_comparison(
-            X_conn_residuals,
-            high_pgs_mask,
-            middle_pgs_mask
-        )
-        print(f"Significant differences after FDR correction: "
-              f"{high_vs_middle_results['n_significant']}")
-
-        # Low vs High comparison
-        print("\nLow PGS vs High PGS comparison...")
-        low_vs_high_results = perform_group_comparison(
-            X_conn_residuals,
-            low_pgs_mask,
-            high_pgs_mask
-        )
-        print(f"Significant differences after FDR correction: "
-              f"{low_vs_high_results['n_significant']}")
-
-        # Social difficulty comparisons between groups
-        social_low = y_social_scaled[low_pgs_mask]
-        social_middle = y_social_scaled[middle_pgs_mask]
-        social_high = y_social_scaled[high_pgs_mask]
-
-        # Social difficulty: Low vs Middle
-        social_t_low_mid, social_p_low_mid = ttest_ind(social_low, social_middle)
-
-        # Social difficulty: High vs Middle
-        social_t_high_mid, social_p_high_mid = ttest_ind(social_high, social_middle)
-
-        # Social difficulty: Low vs High
-        social_t_low_high, social_p_low_high = ttest_ind(social_low, social_high)
-
-        results = {
-            'low_vs_middle': {
-                'results': low_vs_middle_results,
-                'description': 'Low PGS (<-1 SD) vs. Middle PGS (>-0.5 SD & <0.5 SD)',
-                'social_difficulty_t': social_t_low_mid,
-                'social_difficulty_p': social_p_low_mid,
-                'social_difficulty_group1_mean': np.mean(social_low),
-                'social_difficulty_group2_mean': np.mean(social_middle)
-            },
-            'high_vs_middle': {
-                'results': high_vs_middle_results,
-                'description': 'High PGS (>+1 SD) vs. Middle PGS (>-0.5 SD & <0.5 SD)',
-                'social_difficulty_t': social_t_high_mid,
-                'social_difficulty_p': social_p_high_mid,
-                'social_difficulty_group1_mean': np.mean(social_high),
-                'social_difficulty_group2_mean': np.mean(social_middle)
-            },
-            'low_vs_high': {
-                'results': low_vs_high_results,
-                'description': 'Low PGS (<-1 SD) vs. High PGS (>+1 SD)',
-                'social_difficulty_t': social_t_low_high,
-                'social_difficulty_p': social_p_low_high,
-                'social_difficulty_group1_mean': np.mean(social_low),
-                'social_difficulty_group2_mean': np.mean(social_high)
-            }
-        }
-
-        return results
-
     def run_full_analysis(self, motion_threshold=0.2):
         """
         Run complete analysis pipeline for all parcellation sizes.
@@ -987,16 +743,12 @@ class ConnectivityAnalysis:
             # Run interaction analysis
             interaction_results = self.run_interaction_analysis(analysis_data)
 
-            # Run three-group analyses
-            group_split_results = self.run_three_group_analysis(analysis_data)
-
             # Store results
             self.results[n_nodes] = {
                 'analysis_data': analysis_data,
                 'social_univariate': social_results,
                 'pgs_univariate': pgs_results,
                 'interaction': interaction_results,
-                'group_splits': group_split_results
             }
 
         print(f"\n{'='*60}")
@@ -1024,45 +776,18 @@ class ConnectivityAnalysis:
                 pgs_sig = results['pgs_univariate']['n_significant']
                 interact_sig = results['interaction']['n_significant']
 
-                low_vs_middle_sig = (results['group_splits']['low_vs_middle']
-                                     ['results']['n_significant'])
-                high_vs_middle_sig = (results['group_splits']['high_vs_middle']
-                                      ['results']['n_significant'])
-                low_vs_high_sig = (results['group_splits']['low_vs_high']
-                                   ['results']['n_significant'])
-
                 msg_header = f"\n{n_nodes}-node parcellation:"
                 print(msg_header)
                 self.report.append(msg_header)
-                
+
                 details = [
                     f"  N subjects: {n_subj}",
                     f"  N connections: {n_conn}",
                     f"  Social difficulty associations: {social_sig}",
                     f"  PGS associations: {pgs_sig}",
                     f"  Interaction terms: {interact_sig}",
-                    f"  Low vs Middle: {low_vs_middle_sig}",
-                    f"  High vs Middle: {high_vs_middle_sig}",
-                    f"  Low vs High: {low_vs_high_sig}"
                 ]
                 for detail in details:
-                    print(detail)
-                    self.report.append(detail)
-
-                # Social difficulty group differences
-                low_mid_p = (results['group_splits']['low_vs_middle']
-                             ['social_difficulty_p'])
-                high_mid_p = (results['group_splits']['high_vs_middle']
-                              ['social_difficulty_p'])
-                low_high_p = (results['group_splits']['low_vs_high']
-                              ['social_difficulty_p'])
-                
-                p_details = [
-                    f"  Social difficulty (Low vs Middle) p-value: {low_mid_p:.4f}",
-                    f"  Social difficulty (High vs Middle) p-value: {high_mid_p:.4f}",
-                    f"  Social difficulty (Low vs High) p-value: {low_high_p:.4f}"
-                ]
-                for detail in p_details:
                     print(detail)
                     self.report.append(detail)
                 print()
@@ -1153,104 +878,6 @@ def main():
         except Exception as e:
             print(f"Error in social difficulty visualizations "
                   f"({n_nodes}-node): {e}")
-
-        try:
-            # Create group-split visualizations
-            create_group_split_visualizations(results_nodes, n_nodes,
-                                              project_folder)
-        except Exception as e:
-            print(f"Error in group-split visualizations "
-                  f"({n_nodes}-node): {e}")
-
-    # Print detailed group-split results summary
-    header = "\n" + "="*60
-    title = "DETAILED THREE-GROUP RESULTS SUMMARY"
-    separator = "="*60
-    print(header)
-    print(title)
-    print(separator)
-    report.append(header)
-    report.append(title)
-    report.append(separator)
-    report.append("")
-
-    for n_nodes in args.parcellations:
-        if n_nodes in analysis.results:
-            results_nodes = analysis.results[n_nodes]
-            group_splits = results_nodes['group_splits']
-            analysis_data = results_nodes['analysis_data']
-
-            msg = f"\n{n_nodes}-node parcellation:"
-            print(msg)
-            report.append(msg)
-            report.append("-" * 30)
-            print("-" * 30)
-
-            # Group sizes
-            n_low = np.sum(analysis_data['low_pgs_mask'])
-            n_middle = np.sum(analysis_data['middle_pgs_mask'])
-            n_high = np.sum(analysis_data['high_pgs_mask'])
-            
-            sample_info = [
-                f"Final sample size: {analysis_data['n_subjects']} subjects",
-                "",
-                "Group sizes:",
-                f"  Low PGS (<-1 SD): {n_low}",
-                f"  Middle PGS (>-0.5 SD & <0.5 SD): {n_middle}",
-                f"  High PGS (>+1 SD): {n_high}"
-            ]
-            for info in sample_info:
-                print(info)
-                report.append(info)
-
-            # Low vs Middle comparison details
-            low_mid = group_splits['low_vs_middle']
-            low_mid_results = [
-                "\nLow vs Middle comparison:",
-                f"  Significant connections: {low_mid['results']['n_significant']}",
-                f"  Social difficulty difference: t = {low_mid['social_difficulty_t']:.3f}, p = {low_mid['social_difficulty_p']:.4f}",
-                f"  Social difficulty means: Low = {low_mid['social_difficulty_group1_mean']:.3f}, Middle = {low_mid['social_difficulty_group2_mean']:.3f}"
-            ]
-            for line in low_mid_results:
-                print(line)
-                report.append(line)
-
-            # High vs Middle comparison details
-            high_mid = group_splits['high_vs_middle']
-            high_mid_results = [
-                "\nHigh vs Middle comparison:",
-                f"  Significant connections: {high_mid['results']['n_significant']}",
-                f"  Social difficulty difference: t = {high_mid['social_difficulty_t']:.3f}, p = {high_mid['social_difficulty_p']:.4f}",
-                f"  Social difficulty means: High = {high_mid['social_difficulty_group1_mean']:.3f}, Middle = {high_mid['social_difficulty_group2_mean']:.3f}"
-            ]
-            for line in high_mid_results:
-                print(line)
-                report.append(line)
-
-            # Low vs High comparison details
-            low_high = group_splits['low_vs_high']
-            low_high_results = [
-                "\nLow vs High comparison:",
-                f"  Significant connections: {low_high['results']['n_significant']}",
-                f"  Social difficulty difference: t = {low_high['social_difficulty_t']:.3f}, p = {low_high['social_difficulty_p']:.4f}",
-                f"  Social difficulty means: Low = {low_high['social_difficulty_group1_mean']:.3f}, High = {low_high['social_difficulty_group2_mean']:.3f}"
-            ]
-            for line in low_high_results:
-                print(line)
-                report.append(line)
-
-            # Effect size ranges for significant connections
-            for comparison_name, comparison_data in [('Low vs Middle', low_mid),
-                                                     ('High vs Middle', high_mid),
-                                                     ('Low vs High', low_high)]:
-                if comparison_data['results']['n_significant'] > 0:
-                    effects = (comparison_data['results']['effect_sizes']
-                               [comparison_data['results']['significant_indices']])
-                    effect_msg = (f"  {comparison_name} effect sizes: "
-                                 f"range = [{np.min(effects):.3f}, "
-                                 f"{np.max(effects):.3f}]")
-                    print(effect_msg)
-                    report.append(effect_msg)
 
     # Write report to file
     report.append("")

@@ -1,7 +1,7 @@
 # Configuration file for Brain Compensation Snakemake workflow
 
 # Project directories
-project_dir: "/home/jmbathe/Documents/1_Projects/BrainCompensation"
+project_dir: "/home/jmbathe/Documents/1_Projects/BrainCompensation-repro"
 
 # Input data files (relative to data directory)
 # Adjust these to match your actual input file names
@@ -20,6 +20,15 @@ threads: 8        # Number of threads for parallel processing
 mem_mb: 16000     # Memory in MB for large jobs
 
 # Analysis parameters
+# B1 sex-filter method: "demographics" (uses Gender column from
+# input_behavioural) or "chrx" (legacy plinkQC --check-sex F-statistic).
+sex_check_method: "demographics"
+
+# Optional pre-filter: drop one sex from the raw genotypes before B1 runs.
+# "F" drops all females (reproduces the broken chrX filter for sanity checks),
+# "M" drops all males, "" = pass-through (no filter). Uses FAM sex codes via
+# `plink --filter-males` / `--filter-females`.
+# 11prefilter_drop_sex: "F"
 motion_threshold: 0.2
 parcellations: "50 100 200"
 n_components: 10          # Number of PLS components
