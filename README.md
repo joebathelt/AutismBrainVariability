@@ -96,6 +96,28 @@ by the HCP data use terms. See
 
 ## Quick start
 
+### Option A — Docker (recommended, reproducible)
+
+Everything the pipeline needs is pinned in a container image: Python, R, PLINK,
+PRSice-2, GCTA, LaTeX and offscreen OpenGL. From the repository root:
+
+```bash
+./docker/run.sh            # build the image, then run the whole pipeline
+./docker/run.sh -n         # dry run
+./docker/run.sh --selftest # verify every dependency, touch no data
+```
+
+The image contains **no data** — supply `data/` yourself (see [Data](#data)),
+and `docker/run.sh` wires up the mounts, including resolving the symlinks under
+`data/`. Outputs are written back into the repository owned by your user.
+
+See [../docker/README.md](../docker/README.md) for details, and note that a
+genuine end-to-end reproduction needs a clean tree (`./docker/run.sh clean`
+first) — otherwise Snakemake correctly does nothing, because the outputs are
+already present.
+
+### Option B — native install
+
 Edit [config.yaml](config.yaml) to point at your `project_dir` and GCTA
 install, then:
 
