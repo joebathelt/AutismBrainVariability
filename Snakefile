@@ -49,6 +49,9 @@ rule all:
         f"{PROJECT_DIR}/figures/C2b_parcellation_tuning_curves.png",
         f"{PROJECT_DIR}/reports/C3_continuous_heteroscedasticity_report.txt",
         f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
+        f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
+        f"{RESULTS_DIR}/C5_exemplar_subjects.csv",
+        f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png",
 
         # Phase D: Publication figures
         f"{PROJECT_DIR}/figures/D2_quintile_cv_by_sex.png",
@@ -451,6 +454,62 @@ rule continuous_heteroscedasticity_analysis:
         """
 
 
+rule visualize_networks:
+    """Network visualisations by PGS group (C4).
+
+    Bootstrap-averaged connectivity matrices and spring-layout networks per PGS
+    group, per-subject exemplar networks by modularity quartile, bootstrap
+    density plots, and the bootstrap ellipse-extent plot.
+
+    Graph metrics come from C3_heteroscedasticity_results.csv (the live
+    per-subject metrics). The archived results/C4_main_network_metrics.csv is a
+    stale output of the retired PGS-primary pipeline and must NOT be used here.
+    That file has no pgs_group column, so C4 derives it from pgs_z with the same
+    cutoffs it applies to the PGS residuals (low z<-1, middle -0.5..0.5, high z>1).
+
+    Parcellation size is inherited from the C2b-selected partition, so the
+    per-group matrix/network PNGs and the 48 exemplar PNGs carry node counts and
+    subject IDs that are unknown at DAG time; only the fixed-name outputs are
+    declared below. Note the script still writes its outputs with the legacy
+    C5_ prefix."""
+    input:
+        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
+        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        graph_metrics=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
+        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C5_visualize_networks_report.txt",
+        exemplars=f"{RESULTS_DIR}/C5_exemplar_subjects.csv",
+        density_mod=f"{PROJECT_DIR}/figures/C5_Bootstrap_Density_Plot_modularity.png",
+        density_eff=f"{PROJECT_DIR}/figures/C5_Bootstrap_Density_Plot_global_efficiency.png",
+        ellipse=f"{PROJECT_DIR}/figures/C5_Bootstrap_Ellipse_Extent_Plot.png"
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        n_bootstrap=config.get("c4_n_bootstrap", 1000),
+        sample_size=config.get("c4_sample_size", 90)
+    conda:
+        "environment.yml"
+    threads: config.get("threads", 4)
+    resources:
+        mem_mb=config.get("mem_mb", 16000)
+    log:
+        f"{LOGS_DIR}/C4_visualize_networks.log"
+    shell:
+        """
+        python {CODE_DIR}/C4_visualize_networks.py \
+            --project {PROJECT_DIR} \
+            --pgs {input.pgs} \
+            --social {input.social} \
+            --graph-metrics {input.graph_metrics} \
+            --partition {input.partition} \
+            --ids {input.ids} \
+            --matrices-dir {params.matrices_dir} \
+            --n-bootstrap {params.n_bootstrap} \
+            --sample-size {params.sample_size} > {log} 2>&1
+        """
+
+
 # ============================================================================
 # Phase D: Publication Figures
 # ============================================================================
@@ -575,6 +634,9 @@ rule clean:
         # Phase C outputs
         rm -f {DATA_DIR}/merged_fMRI_data.csv
         rm -f {DATA_DIR}/C2_final_partition_*.csv
+        # C4 writes its outputs with the legacy C5_ prefix
+        rm -f {PROJECT_DIR}/reports/C5_visualize_networks_report.txt
+        rm -f {PROJECT_DIR}/figures/C5_*.png
 
         # Quality control outputs
         rm -f {DATA_DIR}/DataRetention_Overview.csv
@@ -607,18 +669,16 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/*_surf.png
 
         # Stale pre-rename / retired-rule outputs
-        # (B0->B1, B2->B3, B4->B5; retired: visualize_networks (C4/C5),
-        # main_landscape_analysis (C3 perform), generate_publication_figures)
+        # (B0->B1, B2->B3, B4->B5; retired: main_landscape_analysis (C3
+        # perform), generate_publication_figures)
         rm -f {PROJECT_DIR}/reports/B0_*.txt
         rm -f {PROJECT_DIR}/reports/B2_*.txt
         rm -f {PROJECT_DIR}/reports/B4_*.txt
         rm -f {PROJECT_DIR}/reports/C4_*.txt
-        rm -f {PROJECT_DIR}/reports/C5_*.txt
         rm -f {PROJECT_DIR}/figures/B0_*.png
         rm -f {PROJECT_DIR}/figures/B2_*.png
         rm -f {PROJECT_DIR}/figures/B4_*.png
         rm -f {PROJECT_DIR}/figures/C4_*.png
-        rm -f {PROJECT_DIR}/figures/C5_*.png
         rm -f {DATA_DIR}/C4_*.npy
         rm -f {DATA_DIR}/C5_*.npy
         rm -f {RESULTS_DIR}/C4_main_network_metrics.csv
