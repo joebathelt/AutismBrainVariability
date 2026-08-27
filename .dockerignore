@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# Build context allowlist.
+#
+# The repo carries ~17 GB (data/ alone is 15 GB of HCP netmats plus 1.2 GB of
+# PLINK outputs). Exclude everything, then re-admit only what the image needs.
+# Resulting context: ~2 MB.
+# ---------------------------------------------------------------------------
+*
+
+!code/
+!docker/
+
+# ...minus junk inside code/
+code/.snakemake/
+code/__pycache__/
+code/utils/__pycache__/
+# code/.git is a `gitdir:` FILE pointing at a worktree outside this repo;
+# excluding it keeps a broken git pointer out of the image.
+code/.git
+code/*.log
+code/snakemake.log
+
+**/__pycache__/
+**/*.pyc
+**/.DS_Store

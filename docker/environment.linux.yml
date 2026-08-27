@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# linux-64 conda environment for the BrainCompensation pipeline.
+#
+# Transcribed from the WORKING linux-64 environment the pipeline actually ran
+# against (~/anaconda3/envs/BrainComp), not from code/environment.yml.
+#
+# code/environment.yml is an Apple-Silicon conda export (appnope, libcxx,
+# llvm-openmp, prefix: /opt/homebrew/...) that cannot solve on linux-64. It is
+# kept in the repo as the record of the author's macOS environment; this file
+# is the container's source of truth.
+# ---------------------------------------------------------------------------
+name: braincomp
+
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  # --- interpreter --------------------------------------------------------
+  - python=3.11.13
+  - pip
+
+  # --- scientific stack ---------------------------------------------------
+  - numpy=2.3.3
+  - pandas=2.3.2
+  - scipy=1.16.2
+  # matplotlib-base, NOT matplotlib: the metapackage drags in pyside6 + qt6
+  # (~115 MB) that would collide with the apt/Mesa OpenGL stack xvfb needs.
+  - matplotlib-base=3.10.6
+  - seaborn-base=0.13.2
+  - scikit-learn=1.7.2
+  - statsmodels=0.14.5
+  - patsy=1.0.1
+
+  # --- neuroimaging / graph theory ----------------------------------------
+  - nibabel=5.3.2
+  - nilearn=0.12.1
+  - bctpy=0.6.1
+  # networkx is MISSING from code/environment.yml but is imported by
+  # C2_find_communities_fMRI.py, C3_..., C4_... and utils/connectome_viz.py.
+  - networkx=3.6.1
+
+  # --- statistics helpers -------------------------------------------------
+  - pingouin=0.5.5
+  - pandas-flavor=0.7.0
+  - xarray=2025.9.0
+  - tabulate
+  - outdated
+
+  # --- plotting helpers ---------------------------------------------------
+  - cmasher=1.9.2
+  - colorspacious
+
+  # --- misc runtime deps --------------------------------------------------
+  - lxml
+  - requests
+
+  # --- workflow engine ----------------------------------------------------
+  # Pinned to 7.x: README_SNAKEMAKE.md documents --cluster, removed in 8+.
+  - snakemake-minimal=7.32.4
+  # snakemake 7 crashes against pulp >= 2.8 (snakemake/snakemake#2606).
+  - pulp=2.7.0
+  - datrie
+
+  # --- genetics binary available as a package -----------------------------
+  # Byte-identical bioconda build to the host's PLINK v1.9.0-b.7.7 (22 Oct 2024).
+  - plink=1.90b7.7
+
+  - pip:
+      # vtk was unpinned in code/environment.yml; pin to the working version.
+      - vtk==9.3.1
+      - brainspace==0.1.20
+      - neuromaps==0.0.5
+      - surfplot==0.2.0

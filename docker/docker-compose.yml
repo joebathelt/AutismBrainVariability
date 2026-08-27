@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------
+# Secondary entry point. docker/run.sh is preferred: Compose can compute
+# neither the symlink-target mounts nor the caller's UID, so this file needs a
+# docker/.env (copy .env.example) and manual maintenance if the data moves.
+#
+#   docker compose -f docker/docker-compose.yml run --rm pipeline
+#   docker compose -f docker/docker-compose.yml run --rm pipeline -n
+# ---------------------------------------------------------------------------
+services:
+  pipeline:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: braincomp:latest
+    platform: linux/amd64
+    user: "${HOST_UID}:${HOST_GID}"
+    shm_size: "2gb"
+    environment:
+      HOME: /work/home
+      CORES: "${CORES:-8}"
+      MEM_MB: "${MEM_MB:-}"
+    volumes:
+      - ..:/project
+      - ../.docker/work:/work
+      # The data/ symlinks point here; mounting the target at its own absolute
+      # path is what makes them resolve inside the container.
+      - "${HCP_DATA_ROOT}:${HCP_DATA_ROOT}:ro"

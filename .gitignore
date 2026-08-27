@@ -1,27 +1,56 @@
-# General
+# ===========================================================================
+# Repository scope
+#
+# This repo tracks the ANALYSIS CODE and the CONTAINER that runs it.
+# It deliberately tracks no data and no generated outputs.
+# ===========================================================================
+
+# --- Data: never commit -----------------------------------------------------
+# HCP imaging/behavioural data is governed by the HCP Data Use Agreement, the
+# genotypes are restricted-access, and the PGC summary statistics have their
+# own terms. data/ also holds symlinks into a local checkout and ~1.5 GB of
+# PLINK/plinkQC intermediates.
+data/
+
+# --- Generated outputs: reproducible by running the pipeline ----------------
+figures/
+results/
+reports/
+logs/
+archive/
+
+# --- Manuscript -------------------------------------------------------------
+# Not currently published. To include the LaTeX sources, delete this line and
+# run:  git add manuscript/*.tex manuscript/*.bib manuscript/*.cls manuscript/*.bst
+manuscript/
+
+# --- Workflow / container state ---------------------------------------------
+.snakemake/
+.docker/
+snakemake.log
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- R ----------------------------------------------------------------------
+.Rhistory
+.RData
+.Rproj.user/
+Rplots.pdf
+
+# --- Editors / OS -----------------------------------------------------------
+.claude/
+.vscode/
+.idea/
 .DS_Store
 __MACOSX/
-.AppleDouble
-.LSOverride
-Icon[]
-
-# Thumbnails
 ._*
-
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
 .Spotlight-V100
-.TemporaryItems
 .Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
 
-# Local directories for code development
-.claude
-.snakemake
-__pycache__
-
-# Run logs
-snakemake.log
-*.log
+# --- Backups ----------------------------------------------------------------
+*.bak
+*.orig
