@@ -45,7 +45,8 @@ from statsmodels.nonparametric.smoothers_lowess import lowess
 import networkx as nx
 import bct
 
-from utils.covariates import COVARIATES, regress_out_covariates
+from utils.covariates import (COVARIATES, ancestry_pc_columns,
+                              load_ancestry_pcs, regress_out_covariates)
 
 # Set up plotting
 plt.style.use('default')
@@ -78,6 +79,7 @@ def _suffixed(name, suffix):
 
 def load_and_prepare_data(project_folder, pgs_file, social_file, behavioural_file,
                           phenotypic_file, movement_file, id_file, matrices_dir,
+                          ancestry_pcs_file, n_ancestry_pcs,
                           n_nodes, motion_threshold, report):
     """Load all data and create PGS groups."""
     msg = "Loading and preparing data..."
@@ -108,6 +110,18 @@ def load_and_prepare_data(project_folder, pgs_file, social_file, behavioural_fil
     merged_df = pd.merge(merged_df, behavioural_df[['Subject', 'Gender', 'FS_IntraCranial_Vol']], on='Subject')
     merged_df = pd.merge(merged_df, phenotypic_df[['Subject', 'Age_in_Yrs']], on='Subject')
     merged_df = pd.merge(merged_df, movement_df[['Subject', 'Movement_RelativeRMS_mean']], on='Subject')
+
+    # Merge ancestry PCs from B1b within-sample PCA (skipped when
+    # n_ancestry_pcs=0 — control run)
+    if n_ancestry_pcs > 0:
+        ancestry_pcs_df = load_ancestry_pcs(ancestry_pcs_file, n_ancestry_pcs)
+        report.append(f"Loaded {n_ancestry_pcs} ancestry PCs for "
+                      f"{len(ancestry_pcs_df)} subjects from {ancestry_pcs_file}")
+        merged_df['Subject'] = merged_df['Subject'].astype(str)
+        merged_df = pd.merge(merged_df, ancestry_pcs_df,
+                             left_on='Subject', right_index=True, how='inner')
+    else:
+        report.append("Ancestry PCs disabled (n_ancestry_pcs=0; control run)")
 
     report.append(f"Merged data shape: {merged_df.shape}")
 
@@ -143,12 +157,14 @@ def load_and_prepare_data(project_folder, pgs_file, social_file, behavioural_fil
 # 2. NETWORK METRICS CALCULATION
 # =============================================================================
 
-def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold, report):
+def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold,
+                              n_ancestry_pcs, report):
     """Calculate modularity and global efficiency for all subjects."""
     msg = f"\nCalculating network metrics ({n_nodes} nodes, {threshold*100:.0f}% threshold)..."
     print(msg)
     report.append("")
     report.append(msg)
+    pc_cols = ancestry_pc_columns(n_ancestry_pcs)
 
     # Load modularity partition
     partition_df = None
@@ -185,7 +201,7 @@ def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold, rep
         G = nx.from_numpy_array(mat_pos)
         global_efficiency = nx.global_efficiency(G)
 
-        results.append({
+        row_dict = {
             'Subject': subject_id,
             'modularity': modularity,
             'global_efficiency': global_efficiency,
@@ -196,24 +212,28 @@ def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold, rep
             'Gender': row['Gender'],
             'FS_IntraCranial_Vol': row['FS_IntraCranial_Vol'],
             'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
-        })
+        }
+        for pc_col in pc_cols:
+            row_dict[pc_col] = row[pc_col]
+        results.append(row_dict)
 
     report.append(f"Computed metrics for {len(results)} subjects")
 
     network_df = pd.DataFrame(results)
 
-    # Residualise brain metrics for age, sex, ICV, and head motion so the
-    # heteroscedasticity tests reflect PGS-related variance beyond demographic
-    # and motion confounds. Matches C1's covariate handling; keep raw values
-    # under *_raw for audit.
+    # Residualise brain metrics for age, sex, ICV, head motion, and ancestry
+    # PCs so heteroscedasticity tests reflect PGS-related variance beyond
+    # demographic, motion, and population-stratification confounds. Matches
+    # C1's covariate handling; keep raw values under *_raw for audit.
+    cov_cols = list(COVARIATES) + pc_cols
     network_df['modularity_raw'] = network_df['modularity']
     network_df['global_efficiency_raw'] = network_df['global_efficiency']
     network_df[['modularity', 'global_efficiency']] = regress_out_covariates(
         network_df[['modularity', 'global_efficiency']],
-        network_df[list(COVARIATES)],
+        network_df[cov_cols],
     )
     report.append(f"Residualised modularity & global_efficiency for: "
-                  f"{', '.join(COVARIATES)}")
+                  f"{', '.join(cov_cols)}")
 
     return network_df
 
@@ -803,6 +823,10 @@ def main():
                         help='Path to subject IDs file')
     parser.add_argument('--matrices-dir', required=False,
                         help='Path to connectivity matrices directory')
+    parser.add_argument('--ancestry-pcs', required=False,
+                        help='Path to plink2 .eigenvec from B1b within-sample PCA')
+    parser.add_argument('--n-ancestry-pcs', type=int, default=5,
+                        help='Number of ancestry PCs to regress out (default: 5)')
     parser.add_argument('--partition', required=True,
                         help='Path to community partition CSV (from C2b). '
                              'n_nodes is derived from the number of rows.')
@@ -850,16 +874,20 @@ def main():
                else project_folder / 'data/subjectIDs_anonymised.txt')
     matrices_dir = (Path(args.matrices_dir) if args.matrices_dir
                     else project_folder / 'data/HCP_PTN1200/netmats')
+    ancestry_pcs_file = (Path(args.ancestry_pcs) if args.ancestry_pcs
+                         else project_folder /
+                         'data/PLINK_anonymised/B1b_within_sample_pca.eigenvec')
     partition_file = Path(args.partition)
 
     # Parcellation size is inherited from the C2b-selected partition
     n_nodes = len(pd.read_csv(partition_file))
 
+    cov_label = ", ".join(list(COVARIATES) + ancestry_pc_columns(args.n_ancestry_pcs))
     report.append(f"Project folder: {project_folder}")
     report.append(f"N nodes (from C2b partition): {n_nodes}")
     report.append(f"Network threshold: {args.threshold}")
     report.append(f"Motion threshold: {args.motion_threshold}")
-    report.append(f"Brain metrics residualised for: {', '.join(COVARIATES)}")
+    report.append(f"Brain metrics residualised for: {cov_label}")
     report.append("  (applied before all heteroscedasticity tests)")
     report.append("")
 
@@ -867,12 +895,14 @@ def main():
     merged_df = load_and_prepare_data(
         project_folder, pgs_file, social_file, behavioural_file,
         phenotypic_file, movement_file, id_file, matrices_dir,
+        ancestry_pcs_file, args.n_ancestry_pcs,
         n_nodes, args.motion_threshold, report
     )
 
     # Calculate network metrics
     network_df = calculate_network_metrics(
-        merged_df, partition_file, n_nodes, args.threshold, report
+        merged_df, partition_file, n_nodes, args.threshold,
+        args.n_ancestry_pcs, report
     )
 
     # Run heteroscedasticity analyses (on full sample)

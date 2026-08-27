@@ -40,7 +40,8 @@ import networkx as nx
 import bct
 import warnings
 
-from utils.covariates import COVARIATES, regress_out_covariates
+from utils.covariates import (COVARIATES, ancestry_pc_columns,
+                              load_ancestry_pcs, regress_out_covariates)
 
 warnings.filterwarnings('ignore')
 
@@ -103,6 +104,18 @@ def load_and_prepare_data(args, report):
     merged_base = pd.merge(merged_base, behavioural_df[['Subject', 'Gender', 'FS_IntraCranial_Vol']], on='Subject')
     merged_base = pd.merge(merged_base, phenotypic_df[['Subject', 'Age_in_Yrs']], on='Subject')
     merged_base = pd.merge(merged_base, movement_df[['Subject', 'Movement_RelativeRMS_mean']], on='Subject')
+
+    # Merge ancestry PCs from B1b within-sample PCA (skipped when
+    # n_ancestry_pcs=0 — control run)
+    if args.n_ancestry_pcs > 0:
+        ancestry_pcs_df = load_ancestry_pcs(args.ancestry_pcs, args.n_ancestry_pcs)
+        report.append(f"  Ancestry PCs: {len(ancestry_pcs_df)} subjects "
+                      f"({args.n_ancestry_pcs} PCs from {args.ancestry_pcs})")
+        merged_base['Subject'] = merged_base['Subject'].astype(str)
+        merged_base = pd.merge(merged_base, ancestry_pcs_df,
+                               left_on='Subject', right_index=True, how='inner')
+    else:
+        report.append("  Ancestry PCs disabled (n_ancestry_pcs=0; control run)")
 
     report.append(f"\nAfter merging base data: {len(merged_base)} subjects")
 
@@ -186,6 +199,7 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
     for n_nodes, thresholds in sensitivity_config.items():
         report.append(f"  {n_nodes} nodes: thresholds {thresholds}")
 
+    pc_cols = ancestry_pc_columns(args.n_ancestry_pcs)
     all_results = {}
 
     for n_nodes in args.parcellations:
@@ -239,7 +253,7 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
                 except Exception:
                     global_efficiency = np.nan
 
-                results.append({
+                row_dict = {
                     'Subject': subject_id,
                     'modularity': modularity,
                     'global_efficiency': global_efficiency,
@@ -252,27 +266,32 @@ def calculate_network_metrics_all(data_by_parcellation, args, report):
                     'Movement_RelativeRMS_mean': row['Movement_RelativeRMS_mean'],
                     'n_nodes': n_nodes,
                     'threshold': threshold,
-                    'config': config_key
-                })
+                    'config': config_key,
+                }
+                for pc_col in pc_cols:
+                    row_dict[pc_col] = row[pc_col]
+                results.append(row_dict)
 
             config_df = pd.DataFrame(results)
             n_before = len(config_df)
             config_df = config_df.dropna(subset=['modularity', 'global_efficiency'])
 
-            # Residualise brain metrics for age, sex, ICV, and head motion.
-            # Keep raw values under *_raw for audit; all downstream tests read
-            # the 'modularity' / 'global_efficiency' columns, so they now
+            # Residualise brain metrics for age, sex, ICV, head motion, and
+            # ancestry PCs from B1b's within-sample PCA. Keep raw values
+            # under *_raw for audit; all downstream tests read the
+            # 'modularity' / 'global_efficiency' columns, so they now
             # operate on residuals (matches C1's covariate handling).
+            cov_cols = list(COVARIATES) + pc_cols
             config_df['modularity_raw'] = config_df['modularity']
             config_df['global_efficiency_raw'] = config_df['global_efficiency']
             config_df[['modularity', 'global_efficiency']] = regress_out_covariates(
                 config_df[['modularity', 'global_efficiency']],
-                config_df[list(COVARIATES)],
+                config_df[cov_cols],
             )
 
             all_results[config_key] = config_df
             report.append(f"  Final n = {len(config_df)} (excluded {n_before - len(config_df)} with missing metrics)")
-            report.append(f"  Residualised modularity & global_efficiency for: {', '.join(COVARIATES)}")
+            report.append(f"  Residualised modularity & global_efficiency for: {', '.join(cov_cols)}")
 
     return all_results
 
@@ -1046,6 +1065,10 @@ def main():
                         help='Path to subject IDs file')
     parser.add_argument('--matrices-dir', required=True,
                         help='Path to connectivity matrices directory')
+    parser.add_argument('--ancestry-pcs', required=True,
+                        help='Path to plink2 .eigenvec from B1b within-sample PCA')
+    parser.add_argument('--n-ancestry-pcs', type=int, default=5,
+                        help='Number of ancestry PCs to regress out (default: 5)')
     parser.add_argument('--partition', required=True,
                         help='Path to community partition CSV (selected by C2b). '
                              'n_nodes is derived from the number of rows.')

@@ -30,6 +30,7 @@ from sklearn.preprocessing import RobustScaler
 from sklearn.linear_model import LinearRegression
 from surfplot import Plot
 from utils import connectome_viz
+from utils.covariates import load_ancestry_pcs, ancestry_pc_columns
 import time
 import warnings
 warnings.filterwarnings('ignore')
@@ -599,7 +600,8 @@ class ConnectivityAnalysis:
     def __init__(self, project_folder, parcellation_sizes=[50, 100, 200],
                  behavioural_file=None, phenotypic_file=None, pgs_file=None,
                  social_file=None, movement_file=None, id_file=None,
-                 matrices_dir=None, report=None):
+                 matrices_dir=None, ancestry_pcs_file=None,
+                 n_ancestry_pcs=5, report=None):
         """
         Initialize the analysis pipeline.
 
@@ -644,8 +646,12 @@ class ConnectivityAnalysis:
                              else self.project_folder / 'data/movement_data_anonymised.csv')
         self.id_file = (Path(id_file) if id_file 
                        else self.project_folder / 'data/subjectIDs_anonymised.txt')
-        self.matrices_dir = (Path(matrices_dir) if matrices_dir 
+        self.matrices_dir = (Path(matrices_dir) if matrices_dir
                             else self.project_folder / 'data/raw_anonymised/')
+        self.ancestry_pcs_file = (Path(ancestry_pcs_file) if ancestry_pcs_file
+                                  else self.project_folder /
+                                  'data/PLINK_anonymised/B1b_within_sample_pca.eigenvec')
+        self.n_ancestry_pcs = int(n_ancestry_pcs)
 
         # Load non-connectivity data
         self._load_phenotypic_data()
@@ -660,8 +666,18 @@ class ConnectivityAnalysis:
         self.behavioural_df = _read_csv_retry(self.behavioural_file)
         self.phenotypic_df = _read_csv_retry(self.phenotypic_file)
         self.movement_df = _read_csv_retry(self.movement_file)
+        if self.n_ancestry_pcs > 0:
+            self.ancestry_pcs_df = load_ancestry_pcs(
+                self.ancestry_pcs_file, self.n_ancestry_pcs)
+            pc_msg = (f"Loaded {self.n_ancestry_pcs} ancestry PCs for "
+                      f"{len(self.ancestry_pcs_df)} subjects from "
+                      f"{self.ancestry_pcs_file}")
+        else:
+            self.ancestry_pcs_df = None
+            pc_msg = "Ancestry PCs disabled (n_ancestry_pcs=0; control run)"
 
         print(f"Loaded data for {len(self.pgs_df)} subjects")
+        print(pc_msg)
 
     def load_connectivity_data(self, n_nodes):
         """
@@ -723,6 +739,14 @@ class ConnectivityAnalysis:
                                                'Movement_RelativeRMS_mean']],
                              on='Subject')
 
+        # Merge in ancestry PCs (Subject indexed by IID-as-string in the
+        # PC table; cast merged_df['Subject'] to str for the join). Skipped
+        # entirely when n_ancestry_pcs=0 (control run).
+        if self.ancestry_pcs_df is not None:
+            merged_df['Subject'] = merged_df['Subject'].astype(str)
+            merged_df = pd.merge(merged_df, self.ancestry_pcs_df,
+                                 left_on='Subject', right_index=True, how='inner')
+
         # Quality control filters
         merged_df = merged_df.loc[
             merged_df['Movement_RelativeRMS_mean'] < motion_threshold]
@@ -737,9 +761,20 @@ class ConnectivityAnalysis:
                          if col.startswith('conn')]
         X_conn = merged_df[conn_features].values
 
-        # Covariates to regress out (sex, age, intracranial volume, head motion)
+        # Covariates to regress out (sex, age, intracranial volume, head
+        # motion, plus ancestry PCs from B1b's within-sample PCA when
+        # n_ancestry_pcs > 0).
+        pc_cols = ancestry_pc_columns(self.n_ancestry_pcs)
         covariates = ['Gender', 'Age_in_Yrs', 'FS_IntraCranial_Vol',
-                      'Movement_RelativeRMS_mean']
+                      'Movement_RelativeRMS_mean'] + pc_cols
+        if self.n_ancestry_pcs > 0:
+            cov_msg = (f"Covariates regressed out: {', '.join(covariates)} "
+                       f"(includes {self.n_ancestry_pcs} ancestry PCs)")
+        else:
+            cov_msg = (f"Covariates regressed out: {', '.join(covariates)} "
+                       "(ancestry PCs disabled — control run)")
+        print(cov_msg)
+        self.report.append(cov_msg)
         X_cov = pd.get_dummies(merged_df[covariates], drop_first=True)
 
         # Outcome variables
@@ -1094,6 +1129,10 @@ def main():
                         help='Path to subject IDs file')
     parser.add_argument('--matrices-dir', required=False,
                         help='Path to connectivity matrices directory')
+    parser.add_argument('--ancestry-pcs', required=False,
+                        help='Path to plink2 .eigenvec from B1b within-sample PCA')
+    parser.add_argument('--n-ancestry-pcs', type=int, default=5,
+                        help='Number of ancestry PCs to regress out (default: 5)')
     parser.add_argument('--motion-threshold', type=float, default=0.2,
                         help='Motion threshold for subject exclusion (default: 0.2)')
     parser.add_argument('--parcellations', nargs='+', type=int,
@@ -1133,6 +1172,8 @@ def main():
         movement_file=args.movement,
         id_file=args.ids,
         matrices_dir=args.matrices_dir,
+        ancestry_pcs_file=args.ancestry_pcs,
+        n_ancestry_pcs=args.n_ancestry_pcs,
         report=report
     )
 

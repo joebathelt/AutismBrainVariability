@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
 B1b_ancestry_PCA_mahalanobis.py
-Ancestry inference via in-sample PCA on 1000G phase 3 hg38 + HCP merge,
-with Mahalanobis distance to a CEU+GBR+IBS+TSI centroid.
+Within-sample ancestry PCA on the B1 .clean triplet, plus a 1000G-projected
+diagnostic PCA + Mahalanobis distance to a CEU+GBR+IBS+TSI centroid.
 
-Replaces B1's plinkQC RF ancestry step. B1 must be run with --skip-ancestry;
-this script consumes the resulting .clean.bed/bim/fam, downloads the full
-1000G phase 3 hg38 reference if not cached, merges on shared chr:pos
-variants, LD-prunes, runs --pca 20 on the merged set, computes Mahalanobis
-distance from each sample to the EUR-reference centroid (using the top K
-PCs), and applies a chi-squared (default) or SD-based cutoff. Produces a
-PC1-vs-PC2 scatter plot with subpopulation centroids, a Mahalanobis
-distribution plot, a per-sample CSV, keep/fail ID lists, and the canonical
-clean PLINK triplet for B2 to consume.
+Two PCAs run side-by-side:
+  1. **Within-sample PCA** on the HCP .clean triplet alone (LD-pruned,
+     --make-founders). The eigenvec is written to
+     {outdir}/B1b_within_sample_pca.eigenvec and consumed by C1/C3/C3b as
+     ancestry nuisance covariates. This is the canonical PC source.
+  2. **1KG-projected diagnostic** — reference PCA on 1000G phase 3, HCP
+     projected onto those axes, Mahalanobis distance to a EUR centroid.
+     Outputs the scatter, distance distribution, per-sample CSV and report
+     section. Purely diagnostic / for sensitivity analyses; not consumed
+     downstream.
+
+No participants are dropped by this step — the ancestry filter has been
+removed entirely. B2 consumes the B1 .clean triplet directly.
 
 Usage:
     python B1b_ancestry_PCA_mahalanobis.py --project /path/to/BrainCompensation
@@ -40,16 +44,29 @@ rcParams['xtick.labelsize'] = 9
 rcParams['ytick.labelsize'] = 9
 rcParams['legend.fontsize'] = 8
 
-# 1000G phase 3 hg38 download URLs (plink2 reference resources).
+# 1000G phase 3 download URLs (plink2 reference resources).
 # Source: https://www.cog-genomics.org/plink/2.0/resources#1kg_phase3
 # These Dropbox URLs change occasionally; if download fails, refresh from
 # the page above and update here, or pre-stage the files manually and pass
 # --skip-download.
-KG_URLS = {
-    "all_hg38.pgen.zst": "https://www.dropbox.com/s/e5n8yr4n7y91fyp/all_hg38.pgen.zst?dl=1",
-    "all_hg38.pvar.zst": "https://www.dropbox.com/s/vx09262b4k1kszy/all_hg38.pvar.zst?dl=1",
-    "all_hg38.psam":     "https://www.dropbox.com/s/qhtb5t3py3kyjeq/hg38_orig.psam?dl=1",
+#
+# Only hg38 has baked-in URLs. For hg19, pre-stage the reference yourself
+# at <refdir>/<ref-subdir>/all_hg19.{pgen,pvar,psam} and pass
+# --skip-download (URLs from the same plink2 page).
+KG_URLS_BY_BUILD = {
+    "hg38": {
+        "all_hg38.pgen.zst": "https://www.dropbox.com/s/e5n8yr4n7y91fyp/all_hg38.pgen.zst?dl=1",
+        "all_hg38.pvar.zst": "https://www.dropbox.com/s/vx09262b4k1kszy/all_hg38.pvar.zst?dl=1",
+        "all_hg38.psam":     "https://www.dropbox.com/s/qhtb5t3py3kyjeq/hg38_orig.psam?dl=1",
+    },
+    "hg19": {
+        "all_hg19.pgen.zst": "https://www.dropbox.com/s/y6ytfoybz48dc0u/all_phase3.pgen.zst?dl=1",
+        "all_hg19.pvar.zst": "https://www.dropbox.com/s/odlexvo8fummcvt/all_phase3.pvar.zst?dl=1",
+        "all_hg19.psam":     "https://www.dropbox.com/scl/fi/haqvrumpuzfutklstazwk/phase3_corrected.psam?rlkey=0yyifzj2fb863ddbmsv4jkeq6&dl=1",
+    },
 }
+
+REF_PREFIX_BY_BUILD = {"hg38": "all_hg38", "hg19": "all_hg19"}
 
 SUPERPOP_COLOURS = {
     "AFR": "#E69F00",
@@ -149,34 +166,39 @@ def download(url, dest):
 # Pipeline steps
 # ============================================================================
 
-def ensure_reference(refdir, plink2, skip_download):
-    """Download (if needed) and decompress the 1000G phase 3 hg38 reference.
+def ensure_reference(refdir, plink2, skip_download, build):
+    """Download (if needed) and decompress the 1000G phase 3 reference for
+    the given build.
 
-    Produces decompressed all_hg38.pgen, all_hg38.pvar, all_hg38.psam in refdir.
-    Returns the path prefix (refdir / 'all_hg38').
+    Produces decompressed all_<build>.{pgen,pvar,psam} in refdir.
+    Returns the path prefix (refdir / 'all_<build>').
     """
     refdir = Path(refdir)
     refdir.mkdir(parents=True, exist_ok=True)
-    prefix = refdir / "all_hg38"
+    ref_name = REF_PREFIX_BY_BUILD[build]
+    prefix = refdir / ref_name
 
-    pgen = refdir / "all_hg38.pgen"
-    pvar = refdir / "all_hg38.pvar"
-    psam = refdir / "all_hg38.psam"
+    pgen = refdir / f"{ref_name}.pgen"
+    pvar = refdir / f"{ref_name}.pvar"
+    psam = refdir / f"{ref_name}.psam"
 
     if pgen.exists() and pvar.exists() and psam.exists():
         log(f"Reference already decompressed: {prefix}.{{pgen,pvar,psam}}")
         return prefix
 
-    if skip_download:
+    urls = KG_URLS_BY_BUILD.get(build, {})
+    if skip_download or not urls:
         missing = [str(p) for p in (pgen, pvar, psam) if not p.exists()]
+        reason = "--skip-download set" if skip_download else f"no baked-in URLs for build {build}"
         raise RuntimeError(
-            "--skip-download set but reference files missing:\n  "
+            f"{reason} but reference files missing:\n  "
             + "\n  ".join(missing)
-            + f"\nPre-stage them in {refdir} and retry."
+            + f"\nPre-stage them in {refdir} (filenames: {ref_name}.pgen/pvar/psam) "
+            + "from https://www.cog-genomics.org/plink/2.0/resources#1kg_phase3 and retry."
         )
 
     # Download .zst archives + .psam if not present
-    for fname, url in KG_URLS.items():
+    for fname, url in urls.items():
         dest = refdir / fname
         if dest.exists() and dest.stat().st_size > 0:
             log(f"Cached: {dest}")
@@ -184,13 +206,13 @@ def ensure_reference(refdir, plink2, skip_download):
         download(url, dest)
 
     # Decompress .zst via plink2
-    pgen_zst = refdir / "all_hg38.pgen.zst"
-    pvar_zst = refdir / "all_hg38.pvar.zst"
+    pgen_zst = refdir / f"{ref_name}.pgen.zst"
+    pvar_zst = refdir / f"{ref_name}.pvar.zst"
     if not pgen.exists():
-        log("Decompressing all_hg38.pgen.zst")
+        log(f"Decompressing {pgen_zst.name}")
         run([plink2, "--zst-decompress", str(pgen_zst), str(pgen)], "plink2-zst")
     if not pvar.exists():
-        log("Decompressing all_hg38.pvar.zst")
+        log(f"Decompressing {pvar_zst.name}")
         run([plink2, "--zst-decompress", str(pvar_zst), str(pvar)], "plink2-zst")
     if not psam.exists():
         raise RuntimeError(f"psam download did not produce {psam}")
@@ -198,12 +220,12 @@ def ensure_reference(refdir, plink2, skip_download):
     return prefix
 
 
-def convert_kg_to_bed(plink2, kg_prefix, workdir):
+def convert_kg_to_bed(plink2, kg_prefix, workdir, build):
     """Convert 1000G pgen/pvar/psam to plink1 bed (biallelic SNPs only,
     de-duplicated). Returns the output prefix."""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    out_prefix = workdir / "1kg_phase3_hg38"
+    out_prefix = workdir / f"1kg_phase3_{build}"
 
     if all((Path(str(out_prefix) + ext)).exists() for ext in (".bed", ".bim", ".fam")):
         log(f"1KG bed already built: {out_prefix}")
@@ -222,15 +244,15 @@ def convert_kg_to_bed(plink2, kg_prefix, workdir):
     return out_prefix
 
 
-def harmonise_ids(plink2, in_prefix, out_prefix, label):
-    """Recode variant IDs to chr:pos[hg38], drop multi-allelics and indels,
+def harmonise_ids(plink2, in_prefix, out_prefix, label, build):
+    """Recode variant IDs to chr:pos[<build>], drop multi-allelics and indels,
     de-duplicate. Both HCP and 1KG go through this so chr:pos IDs match."""
     out_prefix = Path(out_prefix)
     if all(Path(f"{out_prefix}{ext}").exists() for ext in (".bed", ".bim", ".fam")):
         log(f"{label} chrpos bed already built: {out_prefix}")
         return out_prefix
 
-    log(f"Harmonising {label} variant IDs to chr:pos[hg38]")
+    log(f"Harmonising {label} variant IDs to chr:pos[{build}]")
     run([
         plink2,
         "--bfile", str(in_prefix),
@@ -238,7 +260,7 @@ def harmonise_ids(plink2, in_prefix, out_prefix, label):
         "--rm-dup", "force-first",
         "--max-alleles", "2",
         "--snps-only", "just-acgt",
-        "--set-all-var-ids", "@:#[hg38]",
+        "--set-all-var-ids", f"@:#[{build}]",
         "--new-id-max-allele-len", "50", "missing",
         "--make-bed",
         "--out", str(out_prefix),
@@ -430,19 +452,35 @@ def run_pca(plink2, ldpruned_prefix, n_pcs, kg_iids, workdir):
 
     kg_pca_prefix = workdir / "kg_pca"
     log(f"Reference PCA on 1KG (--pca {n_pcs} allele-wts)")
-    # 1KG contains real trios; --ac-founders restricts allele counting to
-    # founders, which is what we want for PCA reference frequencies. --pca
-    # itself already uses founders-only by default.
+    # 1KG contains real trios; --pca itself uses founders-only by default.
+    # However, --freq on the full 1KG set (--nonfounders) ensures all
+    # variants have frequencies available for variance-standardization during
+    # projection. Variants absent in 1KG founders would have zero frequency,
+    # causing projection to fail for HCP samples carrying those alleles.
     run([
         plink2,
         "--bfile", str(ldpruned_prefix),
         "--keep", str(kg_keep),
-        "--freq", "counts", "--ac-founders",
+        "--freq", "counts", "--nonfounders",
         "--pca", str(n_pcs), "allele-wts",
         "--out", str(kg_pca_prefix),
     ], "plink2-pca-ref")
 
-    # 2. Project all merged samples onto the reference PCs via --score.
+    # 2. Filter variants with zero ALT allele count in 1KG reference.
+    #    Some variants are monomorphic in 1KG but segregate in HCP, causing
+    #    variance-standardize to fail. Extract only variants with ALT count > 0.
+    acount_path = Path(f"{kg_pca_prefix}.acount")
+    nonzero_variants = workdir / "nonzero_variants.txt"
+    with open(acount_path) as f_in, open(nonzero_variants, "w") as f_out:
+        header = f_in.readline()  # skip header
+        for line in f_in:
+            fields = line.rstrip("\n").split("\t")
+            # .acount format: CHROM ID REF ALT OBS_CT ALT_COUNT
+            # Column indices: 0=CHROM, 1=ID, 2=REF, 3=ALT, 4=OBS_CT, 5=ALT_CT
+            if len(fields) > 5 and int(fields[5]) > 0:
+                f_out.write(f"{fields[1]}\n")
+
+    # 3. Project all merged samples onto the reference PCs via --score.
     #    eigenvec.allele cols: #CHROM ID REF ALT PROVISIONAL_REF? A1 PC1...PCn
     #    (the PROVISIONAL_REF? column appears because the merged bed came
     #    from plink 1.9, so REF/ALT aren't authoritatively known.)
@@ -454,6 +492,7 @@ def run_pca(plink2, ldpruned_prefix, n_pcs, kg_iids, workdir):
     run([
         plink2,
         "--bfile", str(ldpruned_prefix),
+        "--extract", str(nonzero_variants),
         "--read-freq", f"{kg_pca_prefix}.acount",
         "--score", f"{kg_pca_prefix}.eigenvec.allele",
         "2", "6", "header-read", "no-mean-imputation", "variance-standardize",
@@ -602,20 +641,6 @@ def nearest_subpop(labelled, k_pcs):
     return nearest
 
 
-def write_keep_fail(labelled, outdir):
-    """Write keep/fail HCP ID lists in PLINK --keep format (FID IID, tab)."""
-    outdir = Path(outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    hcp = labelled[labelled["source"] == "HCP"].copy()
-    keep_path = outdir / "B1b_keep_ancestry.IDs"
-    fail_path = outdir / "B1b_fail_ancestry.IDs"
-    hcp.loc[hcp["pass"], ["FID", "IID"]].to_csv(
-        keep_path, sep="\t", header=False, index=False)
-    hcp.loc[~hcp["pass"], ["FID", "IID"]].to_csv(
-        fail_path, sep="\t", header=False, index=False)
-    return keep_path, fail_path
-
-
 def write_per_sample(labelled, k_pcs, n_pcs, outdir):
     outdir = Path(outdir)
     pc_cols = [f"PC{i}" for i in range(1, n_pcs + 1)]
@@ -627,26 +652,80 @@ def write_per_sample(labelled, k_pcs, n_pcs, outdir):
     return path
 
 
-def build_clean_triplet(plink, qc_prefix, keep_path, qcdir, qc_prefix_name):
-    """Apply the keep list to B1's clean.bed/bim/fam to produce the final
-    .clean.ancestry triplet that B2 consumes."""
-    out_prefix = Path(qcdir) / f"{qc_prefix_name}.ancestry"
-    log(f"Building canonical clean triplet: {out_prefix}.bed/bim/fam")
+def run_within_sample_pca(plink2, qc_prefix, n_pcs_within, workdir, outdir):
+    """Within-HCP-sample PCA: LD-prune the B1 .clean triplet and run plink2
+    --pca on the pruned set. Produces {outdir}/B1b_within_sample_pca.eigenvec
+    and .eigenval, consumed by C1/C3/C3b as ancestry nuisance covariates.
+
+    --make-founders is required because the HCP .fam carries artefactual
+    parental IDs from the single-generation cohort; without it plink2 treats
+    most samples as non-founders and refuses to compute allele frequencies
+    needed for --pca variance-standardize.
+    """
+    workdir = Path(workdir)
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    pruned_prefix = workdir / "hcp_within_pruned"
+    log("Within-sample LD prune (--maf 0.01 --indep-pairwise 50 5 0.2)")
     run([
-        plink,
+        plink2,
         "--bfile", str(qc_prefix),
-        "--keep", str(keep_path),
-        "--make-bed",
-        "--out", str(out_prefix),
-    ], "plink-final")
-    return out_prefix
+        "--make-founders",
+        "--maf", "0.01",
+        "--indep-pairwise", "50", "5", "0.2",
+        "--out", str(pruned_prefix),
+    ], "plink2-within-prune")
+    n_pruned = count_lines(f"{pruned_prefix}.prune.in")
+
+    pca_prefix = outdir / "B1b_within_sample_pca"
+    log(f"Within-sample PCA (--pca {n_pcs_within})")
+    run([
+        plink2,
+        "--bfile", str(qc_prefix),
+        "--make-founders",
+        "--extract", f"{pruned_prefix}.prune.in",
+        "--pca", str(n_pcs_within),
+        "--out", str(pca_prefix),
+    ], "plink2-within-pca")
+
+    eigenvec_path = Path(f"{pca_prefix}.eigenvec")
+    eigenval_path = Path(f"{pca_prefix}.eigenval")
+    eigenvals = np.loadtxt(eigenval_path)
+    return eigenvec_path, eigenval_path, eigenvals, n_pruned
+
+
+def plot_within_sample_scree(eigenvals, fig_path, n_show=20):
+    """Scree plot of within-sample PCA eigenvalues / variance explained."""
+    n = min(len(eigenvals), n_show)
+    vals = eigenvals[:n]
+    var_explained = vals / eigenvals.sum() * 100
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4), dpi=150)
+    axes[0].bar(range(1, n + 1), vals, color="#56B4E9", edgecolor="black",
+                linewidth=0.4)
+    axes[0].set_xlabel("PC")
+    axes[0].set_ylabel("Eigenvalue")
+    axes[0].set_title("Within-sample PCA: eigenvalues")
+    axes[0].set_xticks(range(1, n + 1))
+
+    axes[1].bar(range(1, n + 1), var_explained, color="#CC79A7",
+                edgecolor="black", linewidth=0.4)
+    axes[1].set_xlabel("PC")
+    axes[1].set_ylabel("% variance explained")
+    axes[1].set_title("Within-sample PCA: % variance explained")
+    axes[1].set_xticks(range(1, n + 1))
+
+    plt.tight_layout()
+    plt.savefig(fig_path, dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 # ============================================================================
 # Plotting
 # ============================================================================
 
-def plot_pca_scatter(labelled, mu, ref_subpops, fig_path):
+def plot_pca_scatter(labelled, mu, ref_subpops, fig_path, build):
     fig, ax = plt.subplots(figsize=(8, 7), dpi=150)
 
     # 1KG samples by SuperPop
@@ -695,7 +774,7 @@ def plot_pca_scatter(labelled, mu, ref_subpops, fig_path):
 
     ax.set_xlabel("PC1")
     ax.set_ylabel("PC2")
-    ax.set_title("1000G phase 3 hg38 + HCP merged PCA")
+    ax.set_title(f"1000G phase 3 {build} + HCP merged PCA")
     ax.legend(loc="best", frameon=False, fontsize=7, markerscale=1.2)
     plt.tight_layout()
     plt.savefig(fig_path, dpi=300, bbox_inches="tight")
@@ -752,20 +831,32 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--project", required=True, help="Project root directory")
+    p.add_argument("--build", choices=["hg19", "hg38"], default="hg19",
+                   help="Genome build of the B1 .clean triplet; selects the "
+                        "matching 1000G phase 3 reference. hg19 has no baked-in "
+                        "download URLs — pre-stage the reference and pass "
+                        "--skip-download (or specify URLs in KG_URLS_BY_BUILD).")
     p.add_argument("--qcdir", default="data/plinkQC_output",
                    help="B1 plinkQC output directory (relative to --project)")
-    p.add_argument("--qc-prefix", default="Neuro_Chip_anonymised_hg38.clean",
+    p.add_argument("--qc-prefix", default="Neuro_Chip_anonymised.clean",
                    help="B1 clean PLINK file prefix")
     p.add_argument("--refdir", default="data/reference/1000Genomes",
                    help="1000G reference directory (relative to --project)")
-    p.add_argument("--ref-subdir", default="phase3_hg38",
-                   help="Subdir under --refdir for the full phase 3 download")
+    p.add_argument("--ref-subdir", default=None,
+                   help="Subdir under --refdir for the full phase 3 download "
+                        "(defaults to phase3_<build>)")
     p.add_argument("--workdir", default="data/PLINK_anonymised/B1b_ancestry",
                    help="Workdir for merge / PCA intermediates")
     p.add_argument("--outdir", default="data/PLINK_anonymised",
                    help="Output dir for keep/fail ID lists and per-sample CSV")
     p.add_argument("--n-pcs", type=int, default=20,
-                   help="Number of PCs to compute via plink --pca")
+                   help="Number of PCs to compute for the 1KG-projected "
+                        "diagnostic PCA")
+    p.add_argument("--n-pcs-within", type=int, default=20,
+                   help="Number of PCs to compute for the within-HCP-sample "
+                        "PCA. Written to B1b_within_sample_pca.eigenvec; "
+                        "C1/C3/C3b read the leading n_ancestry_pcs (config) "
+                        "of these as nuisance covariates.")
     p.add_argument("--mahalanobis-pcs", type=int, default=4,
                    help="Top K PCs used for the Mahalanobis distance "
                         "(K<n-pcs; brittleness grows with K)")
@@ -790,8 +881,10 @@ def parse_args():
 def main():
     args = parse_args()
     project = Path(args.project).resolve()
+    build = args.build
+    ref_subdir = args.ref_subdir if args.ref_subdir else f"phase3_{build}"
     qcdir = project / args.qcdir
-    refdir = project / args.refdir / args.ref_subdir
+    refdir = project / args.refdir / ref_subdir
     workdir = project / args.workdir
     outdir = project / args.outdir
     figures_dir = project / "figures"
@@ -814,36 +907,40 @@ def main():
     plink = detect_plink(args.path2plink)
     plink2 = detect_plink2(args.path2plink2)
 
-    log(banner("B1b: Ancestry inference (1000G-merged PCA + Mahalanobis)"))
+    log(banner("B1b: Within-sample ancestry PCA + 1KG-projected diagnostic"))
     log(f"Project:         {project}")
+    log(f"Build:           {build}")
     log(f"B1 clean prefix: {qc_prefix_path}")
     log(f"Reference dir:   {refdir}")
     log(f"Workdir:         {workdir}")
     log(f"PLINK 1.9:       {plink}")
     log(f"PLINK 2.0:       {plink2}")
     log(f"Reference subpops: {ref_subpops}")
-    log(f"PCs computed:    {args.n_pcs};  K (Mahalanobis): {args.mahalanobis_pcs}")
+    log(f"Within-sample PCs: {args.n_pcs_within}")
+    log(f"1KG-projected PCs: {args.n_pcs};  K (Mahalanobis): {args.mahalanobis_pcs}")
     log(f"Cutoff:          {args.cutoff_method} "
         f"(chi2_q={args.chi2_quantile}, sd_cutoff={args.sd_cutoff})")
+    log("Filtering:       DISABLED — no participants are dropped by B1b. "
+        "B2 consumes B1's .clean triplet directly.")
     log("")
 
     initial_hcp_n = count_lines(qcdir / f"{args.qc_prefix}.fam")
     initial_hcp_snps = count_lines(qcdir / f"{args.qc_prefix}.bim")
 
     # 1. Reference download / decompression
-    log(banner("Step 1: 1000G phase 3 hg38 reference", "-"))
-    kg_prefix = ensure_reference(refdir, plink2, args.skip_download)
-    psam = load_psam(refdir / "all_hg38.psam")
+    log(banner(f"Step 1: 1000G phase 3 {build} reference", "-"))
+    kg_prefix = ensure_reference(refdir, plink2, args.skip_download, build)
+    psam = load_psam(refdir / f"{REF_PREFIX_BY_BUILD[build]}.psam")
     log(f"psam samples: {len(psam)};  populations: {psam['Population'].nunique()}")
 
     # 2. Convert 1KG to bed
     log(banner("Step 2: Convert 1KG pgen -> bed", "-"))
-    kg_bed = convert_kg_to_bed(plink2, kg_prefix, workdir)
+    kg_bed = convert_kg_to_bed(plink2, kg_prefix, workdir, build)
 
-    # 3. Harmonise variant IDs to chr:pos[hg38]
-    log(banner("Step 3: Harmonise variant IDs to chr:pos[hg38]", "-"))
-    hcp_chrpos = harmonise_ids(plink2, qc_prefix_path, workdir / "hcp_chrpos", "hcp")
-    kg_chrpos = harmonise_ids(plink2, kg_bed, workdir / "1kg_chrpos", "1kg")
+    # 3. Harmonise variant IDs to chr:pos[<build>]
+    log(banner(f"Step 3: Harmonise variant IDs to chr:pos[{build}]", "-"))
+    hcp_chrpos = harmonise_ids(plink2, qc_prefix_path, workdir / "hcp_chrpos", "hcp", build)
+    kg_chrpos = harmonise_ids(plink2, kg_bed, workdir / "1kg_chrpos", "1kg", build)
 
     # 4. Restrict to chr:pos intersection
     log(banner("Step 4: Restrict to chr:pos intersection", "-"))
@@ -893,26 +990,30 @@ def main():
         args.cutoff_method, args.chi2_quantile, args.sd_cutoff)
     log(f"Cutoff: D={cutoff_info['D_thresh']:.4f}  D2={cutoff_info['D2_thresh']:.4f}")
 
-    # 9. Outputs
-    log(banner("Step 9: Write outputs", "-"))
-    keep_path, fail_path = write_keep_fail(labelled, outdir)
+    # 9. Within-sample PCA (canonical PC source for C1/C3/C3b)
+    log(banner("Step 9: Within-HCP-sample PCA", "-"))
+    within_eigenvec, within_eigenval, within_eigenvals, n_within_pruned = \
+        run_within_sample_pca(plink2, qc_prefix_path, args.n_pcs_within,
+                              workdir, outdir)
+    log(f"  Within-sample pruned variants: {n_within_pruned:,}")
+    log(f"  Eigenvec: {within_eigenvec}")
+    log(f"  Eigenval: {within_eigenval}")
+
+    # 10. Diagnostic outputs (1KG-projected per-sample CSV + plots)
+    log(banner("Step 10: Diagnostic outputs (1KG-projected)", "-"))
     per_sample_path = write_per_sample(labelled, args.mahalanobis_pcs, args.n_pcs, outdir)
-    log(f"  Keep list:    {keep_path}")
-    log(f"  Fail list:    {fail_path}")
     log(f"  Per-sample:   {per_sample_path}")
 
-    final_prefix = build_clean_triplet(
-        plink, qc_prefix_path, keep_path, qcdir, args.qc_prefix)
-    log(f"  Clean triplet: {final_prefix}.bed/bim/fam")
-
-    # 10. Plots
-    log(banner("Step 10: Plots", "-"))
     scatter_path = figures_dir / "B1b_PCA_scatter.png"
     dist_path = figures_dir / "B1b_mahalanobis_distribution.png"
-    plot_pca_scatter(labelled, mu, ref_subpops, scatter_path)
+    scree_path = figures_dir / "B1b_within_sample_scree.png"
+    plot_pca_scatter(labelled, mu, ref_subpops, scatter_path, build)
     plot_distance_distribution(labelled, ref_mask, cutoff_info, dist_path)
+    plot_within_sample_scree(within_eigenvals, scree_path,
+                             n_show=min(20, args.n_pcs_within))
     log(f"  Scatter:      {scatter_path}")
     log(f"  Distribution: {dist_path}")
+    log(f"  Scree:        {scree_path}")
 
     # 11. Report
     hcp = labelled[labelled["source"] == "HCP"]
@@ -932,8 +1033,16 @@ def main():
     pc_cols_K = [f"PC{i}" for i in range(1, args.mahalanobis_pcs + 1)]
     centroid_str = ", ".join(f"PC{i+1}={mu[i]:.4f}" for i in range(len(mu)))
 
+    # Within-sample PCA stats
+    total_var = float(within_eigenvals.sum())
+    within_lines = [
+        f"    PC{i+1}: eigenvalue={ev:.4f}  "
+        f"%var={ev/total_var*100:.3f}%"
+        for i, ev in enumerate(within_eigenvals)
+    ]
+
     sections = [
-        banner("B1b: ANCESTRY PCA + MAHALANOBIS REPORT"),
+        banner("B1b: WITHIN-SAMPLE PCA + 1KG-PROJECTED DIAGNOSTIC REPORT"),
         "",
         f"Date:                   {datetime.now():%Y-%m-%d %H:%M:%S}",
         f"Project:                {project}",
@@ -949,7 +1058,14 @@ def main():
         f"  Initial HCP variants: {initial_hcp_snps}",
         f"  1000G psam samples:   {len(psam)}",
         "",
-        banner("VARIANT FILTERING", "-"),
+        banner("WITHIN-SAMPLE PCA (canonical for C1/C3/C3b)", "-"),
+        f"  PCs computed:         {args.n_pcs_within}",
+        f"  Pruned variants:      {n_within_pruned:,} "
+        "(--maf 0.01 --indep-pairwise 50 5 0.2)",
+        "  Eigenvalues / % variance explained:",
+        *within_lines,
+        "",
+        banner("1KG-PROJECTED DIAGNOSTIC: VARIANT FILTERING", "-"),
         f"  HCP chr:pos variants: {n_hcp:,}",
         f"  1KG chr:pos variants: {n_kg:,}",
         f"  Shared variants:      {n_shared:,}",
@@ -960,7 +1076,7 @@ def main():
         f"  Merged samples:       {n_merged_samples:,}",
         f"  After LD prune:       {n_pruned:,}",
         "",
-        banner("PCA + MAHALANOBIS", "-"),
+        banner("1KG-PROJECTED DIAGNOSTIC: PCA + MAHALANOBIS", "-"),
         f"  PCs computed:         {args.n_pcs}",
         f"  PCs used for D:       {args.mahalanobis_pcs}",
         f"  Reference subpops:    {','.join(ref_subpops)}",
@@ -969,12 +1085,14 @@ def main():
         f"  Cutoff method:        {cutoff_info['method']}",
         *(f"  {k}: {v}" for k, v in cutoff_info.items() if k != "method"),
         "",
-        banner("HCP RESULTS", "-"),
+        banner("1KG-PROJECTED DIAGNOSTIC: HCP DISTRIBUTION (advisory only)", "-"),
+        "  Filtering is DISABLED — these counts describe what a "
+        "Mahalanobis filter would do, but no participants are dropped.",
         f"  HCP total:            {n_hcp}",
-        f"  HCP pass:             {n_pass}",
-        f"  HCP fail:             {n_fail}",
+        f"  Within cutoff:        {n_pass}",
+        f"  Beyond cutoff:        {n_fail}",
         "",
-        "  HCP fail breakdown by nearest 1KG subpopulation:",
+        "  Beyond-cutoff breakdown by nearest 1KG subpopulation:",
         *(f"    {pop:6s} {cnt}" for pop, cnt in fail_by_subpop.items()),
         "",
         banner("SANITY CHECKS", "-"),
@@ -986,12 +1104,12 @@ def main():
         "low rate confirms exclusion is biting)",
         "",
         banner("OUTPUTS", "-"),
-        f"  Keep list:        {keep_path}",
-        f"  Fail list:        {fail_path}",
-        f"  Per-sample CSV:   {per_sample_path}",
-        f"  Clean triplet:    {final_prefix}.bed/bim/fam",
-        f"  PCA scatter:      {scatter_path}",
-        f"  Distance dist:    {dist_path}",
+        f"  Within-sample eigenvec: {within_eigenvec}",
+        f"  Within-sample eigenval: {within_eigenval}",
+        f"  Per-sample diag CSV:    {per_sample_path}",
+        f"  PCA scatter:            {scatter_path}",
+        f"  Distance distribution:  {dist_path}",
+        f"  Scree plot:             {scree_path}",
         "",
         banner("END OF REPORT"),
     ]
@@ -1001,8 +1119,8 @@ def main():
 
     log("")
     log(banner("B1b complete"))
-    log(f"  HCP pass: {n_pass} / {n_hcp}")
-    log(f"  Clean triplet for B2: {final_prefix}.bed/bim/fam")
+    log(f"  Within-sample eigenvec for C1/C3/C3b: {within_eigenvec}")
+    log(f"  HCP samples retained (no filtering): {n_hcp}")
 
 
 if __name__ == "__main__":

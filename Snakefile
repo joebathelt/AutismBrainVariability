@@ -10,16 +10,15 @@ PROJECT_DIR = config["project_dir"]
 DATA_DIR = f"{PROJECT_DIR}/data"
 CODE_DIR = f"{PROJECT_DIR}/code"
 GENETICS_INPUT_DIR = f"{DATA_DIR}/raw_anonymised"          # Original genetics data, hg19 (read-only)
-GENETICS_HG38_DIR = f"{DATA_DIR}/raw_anonymised_hg38"      # B0 lifted-over genetics data, hg38
 PLINK_DIR = f"{DATA_DIR}/PLINK_anonymised"                # PLINK working directory (outputs)
 QCDIR = f"{DATA_DIR}/plinkQC_output"                      # B1 plinkQC output directory
 RESULTS_DIR = f"{PROJECT_DIR}/results"
 LOGS_DIR = f"{PROJECT_DIR}/logs"
 GCTA_PATH = config.get("gcta_path", "/opt/gcta")
 
-# PLINK file prefixes (must match defaults in B0/B1 R scripts)
+# PLINK file prefix (must match defaults in B1 R script)
 GENETICS_NAME = "Neuro_Chip_anonymised"
-GENETICS_NAME_HG38 = f"{GENETICS_NAME}_hg38"
+GENETICS_BUILD = "hg19"
 
 # Final target outputs
 rule all:
@@ -35,12 +34,14 @@ rule all:
         f"{PROJECT_DIR}/figures/A3_social_factor_evaluation.png",
         f"{PROJECT_DIR}/reports/A3_evaluate_social_factor_report.txt",
 
-        # Phase B: Genetic/PGS analysis
-        # SANITY-TEST OVERRIDE: B0 liftover and B1b ancestry are bypassed —
-        # B1 consumes the original hg19 genotypes, B2 consumes B1's .clean
-        # triplet directly. Restore the hg38 targets to re-enable B0 + B1b.
+        # Phase B: Genetic/PGS analysis (hg19 throughout)
         f"{QCDIR}/{GENETICS_NAME}.clean.bed",
         f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt",
+        f"{PLINK_DIR}/B1b_within_sample_pca.eigenvec",
+        f"{PROJECT_DIR}/reports/B1b_ancestry_PCA_mahalanobis_report.txt",
+        f"{PROJECT_DIR}/figures/B1b_PCA_scatter.png",
+        f"{PROJECT_DIR}/figures/B1b_mahalanobis_distribution.png",
+        f"{PROJECT_DIR}/figures/B1b_within_sample_scree.png",
         f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile",
         f"{PROJECT_DIR}/figures/B3_pgs_threshold_evaluation.png",
         f"{PROJECT_DIR}/figures/B5_blup_evaluation.png",
@@ -145,38 +146,14 @@ rule evaluate_social_factor:
 # Phase B: Genetic/PGS Analysis
 # ============================================================================
 
-rule liftover_hg19_to_hg38:
-    """Liftover NeuroChip genotypes from hg19 to hg38 (B0).
-
-    Reads the original hg19 PLINK triplet, runs UCSC liftOver, and writes
-    a new hg38 PLINK triplet that B1 consumes. The chain file is downloaded
-    on first run into data/reference/liftover/."""
-    input:
-        bed=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bed",
-        bim=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bim",
-        fam=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.fam"
-    output:
-        bed=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bed",
-        bim=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.bim",
-        fam=f"{GENETICS_HG38_DIR}/{GENETICS_NAME_HG38}.fam",
-        report=f"{PROJECT_DIR}/reports/B0_liftover_report.txt"
-    log:
-        f"{LOGS_DIR}/B0_liftover_hg19_to_hg38.log"
-    shell:
-        """
-        Rscript {CODE_DIR}/B0_liftover_hg19_to_hg38.R \
-            --project {PROJECT_DIR} > {log} 2>&1
-        """
-
-
 rule plinkqc_genotype_qc:
-    """Genotype quality control using plinkQC (B1).
+    """Genotype quality control using plinkQC on hg19 NeuroChip data (B1).
 
-    SANITY-TEST OVERRIDE: consumes the original hg19 genotypes directly
-    (bypassing B0 liftover) so the .bim BP coordinates match the iPSYCH
-    GWAS sumstats and the PRSice/harmonization output mirrors what
-    reproduce-landscape produced. --skip-ancestry stays on; B1b is
-    bypassed via the translate_pgs_to_hcp override below."""
+    Sex filtering is via FAM PEDSEX vs phenotype Gender cross-check (chrX
+    F-statistic disabled — see B1 docstring). Ancestry filtering is
+    delegated to B1b. cleanData() therefore drops only on heterozygosity,
+    sample missingness, and per-marker filters; the sex cross-check is
+    applied as a post-cleanData PLINK --remove pass inside B1."""
     input:
         bed=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bed",
         bim=f"{GENETICS_INPUT_DIR}/{GENETICS_NAME}.bim",
@@ -186,6 +163,8 @@ rule plinkqc_genotype_qc:
         clean_bim=f"{QCDIR}/{GENETICS_NAME}.clean.bim",
         clean_fam=f"{QCDIR}/{GENETICS_NAME}.clean.fam",
         report=f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt"
+    params:
+        sex_filter_flag=lambda wildcards: "" if config.get("apply_sex_filter", True) else "--no-apply-sex-filter"
     log:
         f"{LOGS_DIR}/B1_plinkqc_genotype_qc.log"
     shell:
@@ -194,33 +173,33 @@ rule plinkqc_genotype_qc:
             --project {PROJECT_DIR} \
             --indir data/raw_anonymised \
             --name {GENETICS_NAME} \
-            --genomebuild hg19 \
-            --skip-ancestry > {log} 2>&1
+            --genomebuild {GENETICS_BUILD} \
+            {params.sex_filter_flag} > {log} 2>&1
         """
 
 
 rule ancestry_pca_mahalanobis:
-    """Ancestry inference via 1000G-merged PCA + Mahalanobis distance (B1b).
+    """Within-sample ancestry PCA + 1KG-projected diagnostic (B1b).
 
-    Replaces B1's plinkQC RF ancestry step. Downloads 1000G phase 3 hg38 if
-    not cached, merges with B1's clean output on shared chr:pos variants,
-    LD-prunes, runs --pca 20, computes Mahalanobis D to a CEU+GBR+IBS+TSI
-    centroid using the top 6 PCs, and applies a chi^2(0.999, df=6) cutoff.
-    Writes the canonical .clean.ancestry triplet that B2 consumes."""
+    Two PCAs run side-by-side. (1) Within-HCP-sample PCA on the B1 .clean
+    triplet — its eigenvec is the canonical PC source consumed by C1/C3/C3b
+    as ancestry nuisance covariates. (2) 1KG-merged reference PCA + projection
+    + Mahalanobis distance to a CEU+GBR+IBS+TSI centroid — diagnostic only,
+    no participants are dropped. The hg19 1KG reference must be pre-staged
+    at data/reference/1000Genomes/phase3_hg19/ (no baked-in download URLs);
+    see B1b docstring."""
     input:
-        clean_bed=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bed",
-        clean_bim=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.bim",
-        clean_fam=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.fam"
+        clean_bed=f"{QCDIR}/{GENETICS_NAME}.clean.bed",
+        clean_bim=f"{QCDIR}/{GENETICS_NAME}.clean.bim",
+        clean_fam=f"{QCDIR}/{GENETICS_NAME}.clean.fam"
     output:
-        keep=f"{PLINK_DIR}/B1b_keep_ancestry.IDs",
-        fail=f"{PLINK_DIR}/B1b_fail_ancestry.IDs",
+        within_eigenvec=f"{PLINK_DIR}/B1b_within_sample_pca.eigenvec",
+        within_eigenval=f"{PLINK_DIR}/B1b_within_sample_pca.eigenval",
         per_sample=f"{PLINK_DIR}/B1b_per_sample_distance.csv",
-        clean_bed=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.ancestry.bed",
-        clean_bim=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.ancestry.bim",
-        clean_fam=f"{QCDIR}/{GENETICS_NAME_HG38}.clean.ancestry.fam",
         report=f"{PROJECT_DIR}/reports/B1b_ancestry_PCA_mahalanobis_report.txt",
         scatter=f"{PROJECT_DIR}/figures/B1b_PCA_scatter.png",
-        dist=f"{PROJECT_DIR}/figures/B1b_mahalanobis_distribution.png"
+        dist=f"{PROJECT_DIR}/figures/B1b_mahalanobis_distribution.png",
+        scree=f"{PROJECT_DIR}/figures/B1b_within_sample_scree.png"
     conda:
         "environment.yml"
     log:
@@ -228,16 +207,18 @@ rule ancestry_pca_mahalanobis:
     shell:
         """
         python {CODE_DIR}/B1b_ancestry_PCA_mahalanobis.py \
-            --project {PROJECT_DIR} > {log} 2>&1
+            --project {PROJECT_DIR} \
+            --build {GENETICS_BUILD} \
+            --qc-prefix {GENETICS_NAME}.clean > {log} 2>&1
         """
 
 
 rule translate_pgs_to_hcp:
     """SNP harmonization, PCA, relatedness filtering, and PGS calculation (B2).
 
-    SANITY-TEST OVERRIDE: consumes B1's raw hg19 .clean triplet (no
-    liftover, no ancestry filter). Restore by switching the prefix back
-    to `{GENETICS_NAME_HG38}.clean.ancestry` in input and --clean-name."""
+    Consumes B1's .clean triplet directly — B1b no longer filters by
+    ancestry; ancestry information enters the pipeline as PC covariates in
+    C1/C3/C3b."""
     input:
         clean_bed=f"{QCDIR}/{GENETICS_NAME}.clean.bed",
         gwas=f"{GENETICS_INPUT_DIR}/iPSYCH_PGC_ASD_Nov_2017.gz",
@@ -352,13 +333,15 @@ rule univariate_fmri_prediction:
         behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
         movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
-        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
+        ancestry_pcs=f"{PLINK_DIR}/B1b_within_sample_pca.eigenvec"
     output:
         report=f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt"
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
-        parcellations=config.get("parcellations", "50 100 200")
+        parcellations=config.get("parcellations", "50 100 200"),
+        n_ancestry_pcs=config.get("n_ancestry_pcs", 5)
     conda:
         "environment.yml"
     threads: config.get("threads", 4)
@@ -376,6 +359,8 @@ rule univariate_fmri_prediction:
             --phenotypic {input.phenotypic} \
             --movement {input.movement} \
             --ids {input.ids} \
+            --ancestry-pcs {input.ancestry_pcs} \
+            --n-ancestry-pcs {params.n_ancestry_pcs} \
             --matrices-dir {params.matrices_dir} \
             --motion-threshold {params.motion_threshold} \
             --parcellations {params.parcellations} > {log} 2>&1
@@ -456,7 +441,8 @@ rule main_landscape_analysis:
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
         movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
-        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv"
+        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
+        ancestry_pcs=f"{PLINK_DIR}/B1b_within_sample_pca.eigenvec"
     output:
         report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
         results=f"{RESULTS_DIR}/C3_graph_theory_landscape_results.csv",
@@ -465,7 +451,8 @@ rule main_landscape_analysis:
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
-        thresholds="0.15 0.20 0.25"
+        thresholds="0.15 0.20 0.25",
+        n_ancestry_pcs=config.get("n_ancestry_pcs", 5)
     conda:
         "environment.yml"
     threads: config.get("threads", 4)
@@ -483,6 +470,8 @@ rule main_landscape_analysis:
             --phenotypic {input.phenotypic} \
             --movement {input.movement} \
             --ids {input.ids} \
+            --ancestry-pcs {input.ancestry_pcs} \
+            --n-ancestry-pcs {params.n_ancestry_pcs} \
             --matrices-dir {params.matrices_dir} \
             --partition {input.partition} \
             --thresholds {params.thresholds} \
@@ -500,14 +489,16 @@ rule continuous_heteroscedasticity_analysis:
         movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
         ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
         partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
-        main_report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt"
+        main_report=f"{PROJECT_DIR}/reports/C3_perform_main_landscape_analysis_report.txt",
+        ancestry_pcs=f"{PLINK_DIR}/B1b_within_sample_pca.eigenvec"
     output:
         report=f"{PROJECT_DIR}/reports/C3b_continuous_heteroscedasticity_report.txt",
         results=f"{RESULTS_DIR}/C3b_heteroscedasticity_results.csv"
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
-        threshold=0.2
+        threshold=0.2,
+        n_ancestry_pcs=config.get("n_ancestry_pcs", 5)
     conda:
         "environment.yml"
     threads: config.get("threads", 4)
@@ -525,6 +516,8 @@ rule continuous_heteroscedasticity_analysis:
             --phenotypic {input.phenotypic} \
             --movement {input.movement} \
             --ids {input.ids} \
+            --ancestry-pcs {input.ancestry_pcs} \
+            --n-ancestry-pcs {params.n_ancestry_pcs} \
             --matrices-dir {params.matrices_dir} \
             --partition {input.partition} \
             --threshold {params.threshold} \
@@ -646,8 +639,6 @@ rule clean:
         # Phase B outputs
         rm -f {DATA_DIR}/pgs_selected_threshold.txt
         rm -f {DATA_DIR}/pgs_residuals.csv
-        # Clean B0 hg38 liftover outputs
-        rm -rf {GENETICS_HG38_DIR}/*
         # Clean B1 plinkQC output directory
         rm -rf {QCDIR}/*
         # Clean all PLINK working directory outputs (inputs are in genetics_data/)
@@ -705,4 +696,69 @@ rule clean:
 
         # Logs
         rm -f {LOGS_DIR}/*
+        """
+
+
+rule clean_genetics:
+    """Remove genetics outputs (Phase B) and the Phase C results that
+    consume pgs_residuals, so a rerun redoes B1 -> B5 and the PGS-dependent
+    C-stage steps. Keeps Phase A factor scores and the C2 community
+    partitions (the slow consensus-clustering output) intact."""
+    shell:
+        """
+        # Phase B working directories and per-stage results
+        rm -rf {QCDIR}/*
+        rm -rf {PLINK_DIR}/*
+        rm -f {RESULTS_DIR}/pgs_residuals.csv
+        rm -f {RESULTS_DIR}/pgs_selected_threshold.txt
+
+        # Phase C results that consume pgs_residuals
+        rm -f {RESULTS_DIR}/C3_graph_theory_landscape_results.csv
+        rm -f {RESULTS_DIR}/C3b_*.csv
+        rm -f {RESULTS_DIR}/C4_*.csv
+        rm -f {RESULTS_DIR}/C5_exemplar_subjects.csv
+        rm -f {RESULTS_DIR}/DataRetention_Overview.csv
+
+        # Reports
+        rm -f {PROJECT_DIR}/reports/B1_*.txt
+        rm -f {PROJECT_DIR}/reports/B1b_*.txt
+        rm -f {PROJECT_DIR}/reports/B3_*.txt
+        rm -f {PROJECT_DIR}/reports/B5_*.txt
+        rm -f {PROJECT_DIR}/reports/C1_*.txt
+        rm -f {PROJECT_DIR}/reports/C3_*.txt
+        rm -f {PROJECT_DIR}/reports/C3b_*.txt
+        rm -f {PROJECT_DIR}/reports/C5_*.txt
+
+        # Figures
+        rm -f {PROJECT_DIR}/figures/B1_*.png
+        rm -f {PROJECT_DIR}/figures/B1b_*.png
+        rm -f {PROJECT_DIR}/figures/B3_*.png
+        rm -f {PROJECT_DIR}/figures/B5_*.png
+        rm -f {PROJECT_DIR}/figures/C1_*.png
+        rm -f {PROJECT_DIR}/figures/C3_*.png
+        rm -f {PROJECT_DIR}/figures/C3b_*.png
+        rm -f {PROJECT_DIR}/figures/C4_*.png
+        rm -f {PROJECT_DIR}/figures/C5_*.png
+
+        # Bezier connectome plots from C1 (not prefixed with C1_)
+        rm -f {PROJECT_DIR}/figures/*_positive.png
+        rm -f {PROJECT_DIR}/figures/*_negative.png
+        rm -f {PROJECT_DIR}/figures/*_surf.png
+
+        # Publication figures (depend on C4 metrics)
+        rm -rf {PROJECT_DIR}/figures/publication/
+
+        # Logs for the rules being cleared
+        rm -f {LOGS_DIR}/B1_*.log
+        rm -f {LOGS_DIR}/B1b_*.log
+        rm -f {LOGS_DIR}/B2_*.log
+        rm -f {LOGS_DIR}/B3_*.log
+        rm -f {LOGS_DIR}/B4_*.log
+        rm -f {LOGS_DIR}/B5_*.log
+        rm -f {LOGS_DIR}/C1_*.log
+        rm -f {LOGS_DIR}/C3_*.log
+        rm -f {LOGS_DIR}/C3b_*.log
+        rm -f {LOGS_DIR}/C5_*.log
+        rm -f {LOGS_DIR}/check_data_retention.log
+        rm -f {LOGS_DIR}/generate_publication_figures.log
         """

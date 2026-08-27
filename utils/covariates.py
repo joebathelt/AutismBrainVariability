@@ -12,6 +12,48 @@ from sklearn.linear_model import LinearRegression
 COVARIATES = ("Age_in_Yrs", "Gender", "FS_IntraCranial_Vol",
               "Movement_RelativeRMS_mean")
 
+ANCESTRY_PC_PREFIX = "ancestry_PC"
+
+
+def ancestry_pc_columns(n_pcs):
+    """Names of the ancestry PC covariate columns (ancestry_PC1..ancestry_PC{n})."""
+    return [f"{ANCESTRY_PC_PREFIX}{i}" for i in range(1, n_pcs + 1)]
+
+
+def load_ancestry_pcs(eigenvec_path, n_pcs):
+    """Load the leading n_pcs PCs from a plink2 --pca .eigenvec file.
+
+    Parameters
+    ----------
+    eigenvec_path : str or Path
+        Path to a plink2 .eigenvec output. Header line begins with '#FID'
+        (or '#IID' for plink2 builds that drop FID), followed by PC1, PC2…
+    n_pcs : int
+        Number of leading PCs to retain.
+
+    Returns
+    -------
+    pd.DataFrame
+        Indexed by Subject (str — the IID). Columns ancestry_PC1..ancestry_PC{n_pcs}.
+    """
+    df = pd.read_csv(eigenvec_path, sep=r"\s+", engine="python")
+    df.columns = [c.lstrip("#") for c in df.columns]
+    if "IID" not in df.columns:
+        raise RuntimeError(
+            f"{eigenvec_path}: expected an IID column; got {list(df.columns)}"
+        )
+    pc_src = [f"PC{i}" for i in range(1, n_pcs + 1)]
+    missing = [c for c in pc_src if c not in df.columns]
+    if missing:
+        raise RuntimeError(
+            f"{eigenvec_path}: missing PC columns {missing}; "
+            f"available: {list(df.columns)}"
+        )
+    out = df.set_index(df["IID"].astype(str))[pc_src].copy()
+    out.columns = ancestry_pc_columns(n_pcs)
+    out.index.name = "Subject"
+    return out
+
 
 def regress_out_covariates(Y, covariate_df):
     """Return residuals of Y after regressing on covariate_df via OLS.

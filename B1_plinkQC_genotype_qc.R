@@ -5,13 +5,23 @@
 # Standalone genotype quality control pipeline using plinkQC
 # BrainCompensation Project
 #
-# Performs per-individual QC, per-marker QC, ancestry checking (via
-# plinkQC's pretrained RF classifier), and combined data cleanup.
+# Performs per-individual QC, per-marker QC, and combined data cleanup.
 # Produces diagnostic plots and a text QC report.
 #
-# Expects input in hg38 (produced by B0_liftover_hg19_to_hg38.R). For the
-# ancestry step, multi-probe variants are deduplicated and IDs are recoded
-# to chr:pos[hg38] so they match plinkQC's hg38 loading matrices.
+# Sex filtering is done via a phenotype cross-check (FAM PEDSEX vs the
+# Gender column in the phenotype CSV) — the chrX F-statistic check is
+# disabled because the source HCP data has corrupted female chrX
+# heterozygosity. Samples whose FAM PEDSEX disagrees with the phenotype
+# Gender are dropped via an explicit PLINK --remove pass after cleanData.
+#
+# Ancestry inference is delegated to B1b_ancestry_PCA_mahalanobis.py, which
+# consumes B1's .clean triplet to produce a within-sample PCA (canonical PC
+# source for C1/C3/C3b nuisance covariates) plus a 1KG-projected Mahalanobis
+# diagnostic. B1b does not drop any participants; B2 consumes B1's .clean
+# triplet directly.
+#
+# Default input is hg19 (the original NeuroChip genotypes); pass
+# --genomebuild hg38 if running on lifted-over data.
 #
 # Usage:
 #   Rscript B1_plinkQC_genotype_qc.R --project /path/to/BrainCompensation
@@ -69,23 +79,25 @@ usage <- function() {
   cat("Required:\n")
   cat("  --project       Path to project root directory\n\n")
   cat("Optional:\n")
-  cat("  --indir         Input PLINK directory (relative to project) [data/raw_anonymised_hg38]\n")
-  cat("  --name          PLINK file prefix [Neuro_Chip_anonymised_hg38]\n")
+  cat("  --indir         Input PLINK directory (relative to project) [data/raw_anonymised]\n")
+  cat("  --name          PLINK file prefix [Neuro_Chip_anonymised]\n")
   cat("  --qcdir         QC output directory (relative to project) [data/plinkQC_output]\n")
-  cat("  --refdir        Reference data directory (relative to project) [data/reference/1000Genomes]\n")
   cat("  --path2plink    Path to PLINK v1.9 executable [auto-detect]\n")
   cat("  --path2plink2   Path to PLINK 2.0 executable [auto-detect]\n")
-  cat("  --genomebuild   Genome build of input data [hg38]\n")
+  cat("  --genomebuild   Genome build of input data [hg19]\n")
   cat("  --maf           Minor allele frequency threshold [0.01]\n")
   cat("  --hwe           HWE p-value threshold [1e-6]\n")
   cat("  --geno          SNP missingness threshold [0.01]\n")
   cat("  --mind          Sample missingness threshold [0.03]\n")
   cat("  --het           Heterozygosity SD threshold [3]\n")
   cat("  --ibd           IBD relatedness threshold [0.1875]\n")
-  cat("  --ancestry-th   Ancestry SD threshold from EUR center [1.5]\n")
-  cat("  --skip-ancestry Skip ancestry check [FALSE]\n")
   cat("  --pheno-sex-csv Phenotype CSV with trusted sex (Subject,Gender) for sex cross-check\n")
   cat("                  [data/hcp_behavioural_raw.csv]\n")
+  cat("  --no-apply-sex-filter  Sanity-check mode: still run the PEDSEX vs phenotype\n")
+  cat("                         Gender cross-check and write the audit CSV /\n")
+  cat("                         .fail-sexcheck.IDs (so the report shows what *would*\n")
+  cat("                         have been dropped), but do NOT remove mismatching\n")
+  cat("                         samples from the .clean triplet.\n")
   cat("  --help          Show this help message\n")
   quit(status = 1)
 }
@@ -94,22 +106,20 @@ if (length(args) == 0) usage()
 
 # Initialize with defaults
 project_dir   <- NULL
-indir_rel     <- "data/raw_anonymised_hg38"
-name          <- "Neuro_Chip_anonymised_hg38"
+indir_rel     <- "data/raw_anonymised"
+name          <- "Neuro_Chip_anonymised"
 qcdir_rel     <- "data/plinkQC_output"
-refdir_rel    <- "data/reference/1000Genomes"
 path2plink    <- NULL
 path2plink2   <- NULL
-genomebuild   <- "hg38"
+genomebuild   <- "hg19"
 mafTh         <- 0.01
 hweTh         <- 1e-6
 lmissTh       <- 0.01
 imissTh       <- 0.03
 hetTh         <- 3
 highIBDTh     <- 0.1875
-europeanTh    <- 1.5
-skip_ancestry <- FALSE
 pheno_sex_csv_rel <- "data/hcp_behavioural_raw.csv"
+apply_sex_filter  <- TRUE
 
 i <- 1
 while (i <= length(args)) {
@@ -121,8 +131,6 @@ while (i <= length(args)) {
     name <- args[i + 1]; i <- i + 2
   } else if (args[i] == "--qcdir") {
     qcdir_rel <- args[i + 1]; i <- i + 2
-  } else if (args[i] == "--refdir") {
-    refdir_rel <- args[i + 1]; i <- i + 2
   } else if (args[i] == "--path2plink") {
     path2plink <- args[i + 1]; i <- i + 2
   } else if (args[i] == "--path2plink2") {
@@ -141,12 +149,10 @@ while (i <= length(args)) {
     hetTh <- as.numeric(args[i + 1]); i <- i + 2
   } else if (args[i] == "--ibd") {
     highIBDTh <- as.numeric(args[i + 1]); i <- i + 2
-  } else if (args[i] == "--ancestry-th") {
-    europeanTh <- as.numeric(args[i + 1]); i <- i + 2
-  } else if (args[i] == "--skip-ancestry") {
-    skip_ancestry <- TRUE; i <- i + 1
   } else if (args[i] == "--pheno-sex-csv") {
     pheno_sex_csv_rel <- args[i + 1]; i <- i + 2
+  } else if (args[i] == "--no-apply-sex-filter") {
+    apply_sex_filter <- FALSE; i <- i + 1
   } else if (args[i] == "--help") {
     usage()
   } else {
@@ -164,7 +170,6 @@ if (is.null(project_dir)) {
 
 indir      <- file.path(project_dir, indir_rel)
 qcdir      <- file.path(project_dir, qcdir_rel)
-refdir     <- file.path(project_dir, refdir_rel)
 figures_dir <- file.path(project_dir, "figures")
 reports_dir <- file.path(project_dir, "reports")
 
@@ -174,9 +179,6 @@ pheno_sex_csv <- if (startsWith(pheno_sex_csv_rel, "/")) {
 } else {
   file.path(project_dir, pheno_sex_csv_rel)
 }
-
-# Reference populations for ancestry check
-refPopulation <- c("CEU", "TSI")
 
 # --- Section 4: Input validation and setup ------------------------------------
 
@@ -225,7 +227,7 @@ message("Project:    ", project_dir)
 message("Input dir:  ", indir)
 message("File prefix:", name)
 message("QC dir:     ", qcdir)
-message("Ref dir:    ", refdir)
+message("Build:      ", genomebuild)
 message("")
 
 # Validate input files
@@ -238,7 +240,7 @@ message("PLINK v1.9: ", path2plink)
 message("PLINK 2.0:  ", ifelse(is.null(path2plink2), "not found", path2plink2))
 
 # Create output directories
-for (d in c(qcdir, refdir, figures_dir, reports_dir)) {
+for (d in c(qcdir, figures_dir, reports_dir)) {
   if (!dir.exists(d)) dir.create(d, recursive = TRUE)
 }
 
@@ -355,8 +357,12 @@ precompute_plink_files <- function() {
 # Replaces the chrX F-statistic sex check (disabled because the source data
 # has corrupted female chrX genotypes — see precompute_plink_files()).
 # Reads the phenotype CSV (expects columns "Subject" and "Gender" with M/F),
-# joins to the FAM by IID == Subject, and flags any sample where FAM PEDSEX
-# disagrees with the trusted Gender, or where the IID is missing from the CSV.
+# joins to the FAM by IID == Subject, and flags samples where FAM PEDSEX
+# disagrees with the trusted Gender. Mismatches are written to
+# .fail-sexcheck.IDs and dropped after cleanData via PLINK --remove.
+# Samples missing from the phenotype CSV are reported in the per-sample
+# CSV but NOT dropped at this stage (they'll be excluded later when the
+# downstream analyses join on Subject).
 
 cross_check_sex_with_phenotype <- function() {
   message("")
@@ -401,20 +407,22 @@ cross_check_sex_with_phenotype <- function() {
   per_sex[, sex_mismatch     := !missing_in_pheno &
                                 !is.na(PEDSEX) &
                                 PEDSEX != pheno_pedsex]
-  per_sex[, fail_sex         := sex_mismatch | missing_in_pheno]
+  # Only mismatches drive the QC drop. missing_in_pheno is reported but
+  # not enforced here (downstream analyses gate on phenotype availability).
+  per_sex[, fail_sex         := sex_mismatch]
 
   n_total    <- nrow(per_sex)
-  n_match    <- sum(!per_sex$fail_sex)
   n_mismatch <- sum(per_sex$sex_mismatch)
   n_missing  <- sum(per_sex$missing_in_pheno)
+  n_match    <- n_total - n_mismatch
 
   message("  Total FAM samples:           ", n_total)
   message("  Match phenotype sex:         ", n_match)
-  message("  Mismatch (FAM != phenotype): ", n_mismatch)
-  message("  Missing from phenotype CSV:  ", n_missing)
+  message("  Mismatch (FAM != phenotype): ", n_mismatch, "  [DROPPED]")
+  message("  Missing from phenotype CSV:  ", n_missing,  "  [reported only]")
 
   fail_path <- file.path(qcdir, paste0(name, ".fail-sexcheck.IDs"))
-  if (n_mismatch + n_missing > 0) {
+  if (n_mismatch > 0) {
     write.table(per_sex[fail_sex == TRUE, .(FID, IID)],
                 fail_path,
                 quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t")
@@ -423,11 +431,11 @@ cross_check_sex_with_phenotype <- function() {
   }
 
   mismatch_csv <- file.path(reports_dir, "B1_sex_mismatch.csv")
-  fwrite(per_sex[fail_sex == TRUE,
+  fwrite(per_sex[sex_mismatch == TRUE | missing_in_pheno == TRUE,
                  .(FID, IID, PEDSEX, pheno_gender, pheno_pedsex,
                    sex_mismatch, missing_in_pheno)],
          mismatch_csv)
-  message("  Mismatch list written to: ", mismatch_csv)
+  message("  Cross-check audit CSV: ", mismatch_csv)
 
   list(per_sex = per_sex,
        n_total = n_total, n_match = n_match,
@@ -450,14 +458,9 @@ run_per_individual_qc <- function() {
     path2plink      = path2plink,
     path2plink2     = path2plink2,
 
-    # SANITY-TEST OVERRIDE: chrX F-statistic sex check re-enabled to reproduce
-    # the legacy (pre-d9554de) pipeline behaviour from reproduce-landscape.
-    # Source chrX genotypes are corrupted for females (~26% het instead of
-    # ~50%) so this drops most/all females. Revert with
-    # `git checkout B1_plinkQC_genotype_qc.R`.
-    dont.check_sex  = FALSE,
-    maleTh          = 0.8,
-    femaleTh        = 0.2,
+    # Sex check disabled — source chrX genotypes are corrupted for females
+    # (see precompute_plink_files() and cross_check_sex_with_phenotype()).
+    dont.check_sex  = TRUE,
 
     # Heterozygosity and missingness
     dont.check_het_and_miss = FALSE,
@@ -547,108 +550,13 @@ run_per_marker_qc <- function() {
   return(results)
 }
 
-# --- Section 8: Ancestry check (RF prediction) --------------------------------
-# Uses plinkQC's pretrained random forest classifier via ancestry_prediction().
-# Requires plink2 and loading matrices from plinkQCAncestryData.
-#``
-# Pre-step: dedupe multi-probe variants and recode IDs to chr:pos[hg38] so
-# the hg38 loading matrices match by position. Without this, plinkQC's
-# default rsID match retains only ~400 variants on NeuroChip.
+# --- Section 8: Combined cleanup ---------------------------------------------
+# Ancestry inference is delegated to B1b_ancestry_PCA_mahalanobis.py, which
+# computes a within-sample PCA on B1's .clean triplet for use as nuisance
+# covariates in C1/C3/C3b (no participant exclusion). cleanData() therefore
+# runs with filterAncestry = FALSE.
 
-prepare_for_ancestry <- function() {
-  if (is.null(path2plink2)) {
-    stop("PLINK 2.0 is required to prepare input for ancestry_prediction(). ",
-         "Please install plink2 or specify --path2plink2.")
-  }
-  prepared_name   <- paste0(name, "_chrpos")
-  prepared_prefix <- file.path(qcdir, prepared_name)
-  out_files <- paste0(prepared_prefix, c(".bed", ".bim", ".fam"))
-  if (all(file.exists(out_files))) {
-    message("Prepared ancestry input already present: ", prepared_prefix)
-    return(list(indir = qcdir, name = prepared_name))
-  }
-  message("Preparing input for ancestry: dedupe + recode IDs to chr:pos[", genomebuild, "]")
-  status <- system2(
-    path2plink2,
-    args = c(
-      "--bfile", shQuote(file.path(indir, name)),
-      "--rm-dup", "force-first",
-      "--set-all-var-ids", paste0("@:#[", genomebuild, "]"),
-      "--new-id-max-allele-len", "50", "missing",
-      "--make-bed",
-      "--out", shQuote(prepared_prefix)
-    ),
-    stdout = TRUE, stderr = TRUE
-  )
-  for (line in status) message("  [plink2] ", line)
-  if (!all(file.exists(out_files))) {
-    stop("plink2 prep step did not produce all output files: ",
-         paste(out_files[!file.exists(out_files)], collapse = ", "))
-  }
-  list(indir = qcdir, name = prepared_name)
-}
-
-run_ancestry_check <- function() {
-  message("")
-  message("=============================================================")
-  message("Running ancestry check (RF prediction)...")
-  message("=============================================================")
-
-  # Locate loading matrices: check package bundled data first, then local path
-  load_mat <- system.file("extdata", "load_mat",
-                           "all_hg38.pca",
-                           package = "plinkQC")
-  if (nchar(load_mat) == 0) {
-    load_mat <- file.path(refdir, "loading_matrix",
-                           "all_hg38.pca")
-    if (!file.exists(paste0(load_mat, ".eigenvec.allele")) &&
-        !file.exists(paste0(load_mat, ".acount"))) {
-      stop("Loading matrices not found at: ", load_mat, "\n",
-           "Download from: https://github.com/meyer-lab-cshl/plinkQCAncestryData\n",
-           "Unzip into:    ", file.path(refdir, "loading_matrix/"))
-    }
-  }
-
-  if (is.null(path2plink2)) {
-    stop("PLINK 2.0 is required for ancestry_prediction(). ",
-         "Please install plink2 or specify --path2plink2.")
-  }
-
-  prep <- prepare_for_ancestry()
-
-  ancestry <- suppress_upstream_warnings(ancestry_prediction(
-    indir         = prep$indir,
-    name          = prep$name,
-    qcdir         = qcdir,
-    path2plink2   = path2plink2,
-    path2load_mat = load_mat,
-    plink2format  = FALSE,    # input is plink1 .bed/.bim/.fam
-    var_format    = TRUE,     # variant IDs are now chr:pos[hg38]
-    excludeAncestry = c("Africa", "America", "East_Asia", "Central_South_Asia", "Middle_East"), # exclude non-European groups
-    verbose       = TRUE,
-    showPlinkOutput = TRUE
-  ))
-
-  # plinkQC writes the exclude file under the prepared prefix (or not at all
-  # when no samples fail). cleanData() expects it under the original prefix,
-  # so mirror it (creating an empty file when nothing fails).
-  exclude_path <- file.path(qcdir, paste0(name, ".exclude-ancestry.IDs"))
-  if (!is.null(ancestry$fail_ancestry) && nrow(ancestry$fail_ancestry) > 0) {
-    write.table(
-      ancestry$fail_ancestry[, c("FID", "IID")],
-      exclude_path,
-      quote = FALSE, row.names = FALSE, col.names = FALSE, sep = "\t"
-    )
-  } else {
-    file.create(exclude_path)
-  }
-
-  return(ancestry)
-}
-
-# --- Section 9: Combined cleanup ---------------------------------------------
-
-run_clean_data <- function(do_ancestry) {
+run_clean_data <- function() {
   message("")
   message("=============================================================")
   message("Running combined data cleanup...")
@@ -660,15 +568,14 @@ run_clean_data <- function(do_ancestry) {
     qcdir       = qcdir,
     path2plink  = path2plink,
 
-    # SANITY-TEST OVERRIDE: filterSex re-enabled so cleanData() drops samples
-    # whose .fam SEX disagrees with the chrX F-statistic call — matches the
-    # legacy (reproduce-landscape) pipeline despite known chrX corruption in
-    # the source data. The phenotype cross-check still runs but is advisory.
-    filterSex               = TRUE,
+    # Sex check off (chrX corruption in source; phenotype cross-check is
+    # applied separately via PLINK --remove after cleanData).
+    # Ancestry off (delegated to B1b_ancestry_PCA_mahalanobis.py).
+    filterSex               = FALSE,
     filterHeterozygosity    = TRUE,
     filterSampleMissingness = TRUE,
     filterRelated           = FALSE,
-    filterAncestry          = do_ancestry,
+    filterAncestry          = FALSE,
 
     # Marker filters
     filterSNPMissingness    = TRUE,
@@ -684,6 +591,36 @@ run_clean_data <- function(do_ancestry) {
   ))
 
   return(clean)
+}
+
+# Apply the phenotype-derived sex filter to cleanData's output by running
+# `plink --remove .fail-sexcheck.IDs --make-bed`, overwriting the .clean
+# triplet in place. No-op when the fail file is empty.
+apply_sex_remove <- function(sex_check) {
+  fail_path <- sex_check$fail_path
+  if (!file.exists(fail_path) || file.info(fail_path)$size == 0) {
+    message("Sex cross-check produced no drops; .clean triplet unchanged.")
+    return(invisible(NULL))
+  }
+  clean_prefix <- file.path(qcdir, paste0(name, ".clean"))
+  tmp_prefix   <- file.path(qcdir, paste0(name, ".clean.tmp"))
+  message("Applying sex cross-check filter to .clean triplet...")
+  status <- system2(
+    path2plink,
+    args = c(
+      "--bfile",   shQuote(clean_prefix),
+      "--remove",  shQuote(fail_path),
+      "--make-bed",
+      "--out",     shQuote(tmp_prefix)
+    ),
+    stdout = TRUE, stderr = TRUE
+  )
+  for (line in status) message("  [plink] ", line)
+  for (ext in c(".bed", ".bim", ".fam", ".log")) {
+    src <- paste0(tmp_prefix, ext); dst <- paste0(clean_prefix, ext)
+    if (file.exists(src)) file.rename(src, dst)
+  }
+  invisible(NULL)
 }
 
 # --- Section 10: Report and plot saving ---------------------------------------
@@ -710,16 +647,14 @@ write_qc_report <- function(lines, filename = "B1_plinkQC_genotype_qc_report.txt
   message("Saved report: ", filepath)
 }
 
-# --- Section 10b: Per-sample drop-reason breakdown ----------------------------
+# --- Section 8b: Per-sample drop-reason breakdown ----------------------------
 # Re-derives pass/fail for every sample directly from the raw PLINK outputs
-# (.imiss, .het) plus the ancestry result and the external sex cross-check,
-# then writes one row per sample with the reason(s). plinkQC's aggregate
-# counts overlap across checks; this gives an authoritative per-individual
-# breakdown. Sex mismatches are reported but DO NOT trigger drops (filterSex
-# is off because the chrX-based check is unusable on this data; mismatches
-# are flagged for manual review instead).
+# (.imiss, .het) plus the external sex cross-check, then writes one row per
+# sample with the reason(s). Sex mismatches are first-class drop reasons
+# (applied via the post-cleanData PLINK --remove pass). Ancestry filtering
+# happens in B1b and is reported there.
 
-summarize_drops <- function(ancestry, ancestry_done, sex_check) {
+summarize_drops <- function(sex_check) {
   imiss <- fread(file.path(qcdir, paste0(name, ".imiss")))
   het   <- fread(file.path(qcdir, paste0(name, ".het")))
 
@@ -737,7 +672,6 @@ summarize_drops <- function(ancestry, ancestry_done, sex_check) {
   per[, fail_imiss := !is.na(F_MISS) & F_MISS > imissTh]
   per[, fail_het   := !is.na(F_HET)  & (F_HET < het_lo | F_HET > het_hi)]
 
-  # Sex cross-check (advisory; doesn't drop)
   if (!is.null(sex_check)) {
     sx <- as.data.table(sex_check$per_sex)[, .(FID, IID, PEDSEX,
                                                pheno_gender, pheno_pedsex,
@@ -750,26 +684,12 @@ summarize_drops <- function(ancestry, ancestry_done, sex_check) {
   per[is.na(sex_mismatch),     sex_mismatch     := FALSE]
   per[is.na(missing_in_pheno), missing_in_pheno := FALSE]
 
-  if (ancestry_done && !is.null(ancestry$fail_ancestry) &&
-      nrow(ancestry$fail_ancestry) > 0) {
-    a <- as.data.table(ancestry$fail_ancestry)
-    a[, FID := as.character(FID)][, IID := as.character(IID)]
-    a[, fail_ancestry := TRUE]
-    pop_col <- intersect(c("Pop_predicted", "Pop", "predicted"), names(a))[1]
-    if (!is.na(pop_col)) a[, predicted_pop := as.character(get(pop_col))]
-    keep <- intersect(c("FID", "IID", "fail_ancestry", "predicted_pop"), names(a))
-    per <- merge(per, a[, ..keep], by = c("FID", "IID"), all.x = TRUE)
-  }
-  if (!"fail_ancestry" %in% names(per)) per[, fail_ancestry := FALSE]
-  per[is.na(fail_ancestry), fail_ancestry := FALSE]
-
-  # cleanData() filters that actually drop: het, imiss, ancestry (sex off,
-  # related off). sex_mismatch is advisory.
-  per[, dropped := fail_imiss | fail_het | fail_ancestry]
-  per[, reasons := apply(.SD, 1, function(r) {
-        paste(c("imiss", "het", "ancestry")[as.logical(r)], collapse = ";")
+  per[, fail_sex := sex_mismatch]
+  per[, dropped  := fail_imiss | fail_het | fail_sex]
+  per[, reasons  := apply(.SD, 1, function(r) {
+        paste(c("imiss", "het", "sex")[as.logical(r)], collapse = ";")
       }),
-      .SDcols = c("fail_imiss", "fail_het", "fail_ancestry")]
+      .SDcols = c("fail_imiss", "fail_het", "fail_sex")]
 
   full_path    <- file.path(reports_dir, "B1_per_sample_qc.csv")
   dropped_path <- file.path(reports_dir, "B1_dropped_individuals.csv")
@@ -780,25 +700,14 @@ summarize_drops <- function(ancestry, ancestry_done, sex_check) {
 
   n_imiss <- sum(per$fail_imiss)
   n_het   <- sum(per$fail_het)
-  n_anc   <- sum(per$fail_ancestry)
+  n_sex   <- sum(per$fail_sex)
   n_total <- sum(per$dropped)
-  n_sex_mismatch <- sum(per$sex_mismatch)
-  n_sex_missing  <- sum(per$missing_in_pheno)
+  n_missing  <- sum(per$missing_in_pheno)
 
   pair <- function(a, b, lab) {
     paste0("    ", lab, ": ", sum(per[[a]] & per[[b]]))
   }
 
-  # Ancestry breakdown by predicted population
-  anc_block <- character(0)
-  if (ancestry_done && n_anc > 0 && "predicted_pop" %in% names(per)) {
-    by_pop <- sort(table(per[fail_ancestry == TRUE]$predicted_pop),
-                   decreasing = TRUE)
-    anc_block <- c("    by predicted population:",
-                   paste0("      ", names(by_pop), " -> ", as.integer(by_pop)))
-  }
-
-  # Build report block, dropping NULLs cleanly
   lines <- c(
     "DROPPED INDIVIDUALS BREAKDOWN (authoritative — recomputed from raw PLINK files):",
     paste0("  Failed sample missingness:  ", n_imiss, "  (F_MISS > ", imissTh, ")"),
@@ -808,22 +717,21 @@ summarize_drops <- function(ancestry, ancestry_done, sex_check) {
     paste0("    het only (not imiss):     ", sum(per$fail_het & !per$fail_imiss)),
     paste0("    imiss only (not het):     ", sum(per$fail_imiss & !per$fail_het)),
     paste0("    both het AND imiss:       ", sum(per$fail_het &  per$fail_imiss)),
-    if (ancestry_done) paste0("  Failed ancestry:            ", n_anc),
-    anc_block,
+    paste0("  Failed sex cross-check:     ", n_sex,
+           "  (FAM PEDSEX != phenotype Gender)"),
     "",
-    "SEX CROSS-CHECK (advisory — chrX F-statistic disabled; not a drop reason):",
-    paste0("  FAM PEDSEX vs phenotype Gender: ",
-           n_sex_mismatch, " mismatch, ", n_sex_missing, " missing from CSV"),
+    "  Samples missing from phenotype CSV (reported, not dropped):",
+    paste0("    n = ", n_missing),
     "",
     "  Pairwise overlap (samples failing BOTH checks):",
-    pair("fail_imiss", "fail_het",   "imiss & het"),
-    if (ancestry_done) pair("fail_imiss", "fail_ancestry", "imiss & ancestry"),
-    if (ancestry_done) pair("fail_het",   "fail_ancestry", "het & ancestry"),
+    pair("fail_imiss", "fail_het", "imiss & het"),
+    pair("fail_imiss", "fail_sex", "imiss & sex"),
+    pair("fail_het",   "fail_sex", "het & sex"),
     "",
     paste0("  TOTAL UNIQUE DROPPED: ", n_total,
-           "  (sum of categories = ", n_imiss + n_het + n_anc,
+           "  (sum of categories = ", n_imiss + n_het + n_sex,
            "; samples failing >1 check = ",
-           n_imiss + n_het + n_anc - n_total, ")"),
+           n_imiss + n_het + n_sex - n_total, ")"),
     "",
     "  Per-sample CSVs:",
     paste0("    All samples + flags:  ", full_path),
@@ -842,17 +750,20 @@ main <- function() {
 
   # --- Sex cross-check (replaces broken chrX F-statistic check) ---
   sex_check <- cross_check_sex_with_phenotype()
+  mismatch_status <- if (apply_sex_filter) "[DROPPED]" else "[would be dropped — filter bypassed]"
+  apply_status <- if (apply_sex_filter) "YES" else "NO (sanity-check mode — mismatches retained)"
   report_lines <- c(report_lines,
     "SEX CROSS-CHECK (FAM PEDSEX vs phenotype CSV):",
     paste("  Phenotype source:           ", pheno_sex_csv),
     paste("  Total FAM samples:          ", sex_check$n_total),
     paste("  Match phenotype sex:        ", sex_check$n_match),
-    paste("  Mismatch (FAM != phenotype):", sex_check$n_mismatch),
-    paste("  Missing from phenotype CSV: ", sex_check$n_missing),
-    paste("  Mismatch list:              ", sex_check$mismatch_csv),
-    "  NOTE: chrX F-statistic check is DISABLED — source data has corrupted",
-    "        female chrX genotypes (heterozygosity ~26%, expected ~50%).",
-    "        Mismatches above are flagged for review; cleanData does NOT drop them.",
+    paste("  Mismatch (FAM != phenotype):", sex_check$n_mismatch, mismatch_status),
+    paste("  Missing from phenotype CSV: ", sex_check$n_missing,  " [reported only]"),
+    paste("  Audit CSV:                  ", sex_check$mismatch_csv),
+    paste("  Apply filter:               ", apply_status),
+    "  Note: chrX F-statistic check is DISABLED (source data has corrupted",
+    "        female chrX heterozygosity). When the filter is applied, sex",
+    "        mismatches are dropped via a post-cleanData PLINK --remove pass.",
     ""
   )
 
@@ -935,56 +846,15 @@ main <- function() {
     save_qc_plot(fail_markers$p_maf, "B1_maf.png", width = 8, height = 6)
   }
 
-  # --- Ancestry check ---
-  ancestry        <- NULL
-  ancestry_done   <- FALSE
-  n_ancestry_fail <- 0
-
-  if (!skip_ancestry) {
-    tryCatch({
-      ancestry <- run_ancestry_check()
-
-      n_ancestry_fail <- length(ancestry$fail_ancestry$FID)
-      ancestry_done <- TRUE
-
-      message("")
-      message("Ancestry check results:")
-      message("  Failed ancestry:  ", n_ancestry_fail)
-
-      report_lines <- c(report_lines,
-        "ANCESTRY CHECK (RF prediction):",
-        paste("  Failed ancestry:      ", n_ancestry_fail),
-        ""
-      )
-
-      # Save ancestry plot
-      if (!is.null(ancestry$p_ancestry)) {
-        save_qc_plot(ancestry$p_ancestry, "B1_ancestry_check.png", width = 10, height = 8)
-      }
-
-    }, error = function(e) {
-      message("")
-      message("WARNING: Ancestry check failed: ", e$message)
-      message("Continuing without ancestry filtering.")
-      report_lines <<- c(report_lines,
-        "ANCESTRY CHECK:",
-        paste("  SKIPPED (error:", e$message, ")"),
-        ""
-      )
-    })
-  } else {
-    message("")
-    message("Ancestry check: SKIPPED (--skip-ancestry)")
-    report_lines <- c(report_lines,
-      "ANCESTRY CHECK:",
-      "  SKIPPED (--skip-ancestry flag)",
-      ""
-    )
-  }
+  report_lines <- c(report_lines,
+    "ANCESTRY CHECK:",
+    "  Delegated to B1b_ancestry_PCA_mahalanobis.py (1000G-merged PCA).",
+    ""
+  )
 
   # --- Per-individual drop-reason breakdown ---
   drops <- tryCatch(
-    summarize_drops(ancestry, ancestry_done, sex_check),
+    summarize_drops(sex_check),
     error = function(e) {
       message("Warning: drop-reason breakdown failed: ", e$message)
       list(lines = c("DROPPED INDIVIDUALS BREAKDOWN:",
@@ -995,7 +865,15 @@ main <- function() {
   report_lines <- c(report_lines, drops$lines, "")
 
   # --- Combined cleanup ---
-  clean <- run_clean_data(do_ancestry = ancestry_done)
+  clean <- run_clean_data()
+  if (apply_sex_filter) {
+    apply_sex_remove(sex_check)
+  } else {
+    message("Sex filter BYPASSED (--no-apply-sex-filter): .clean triplet ",
+            "retains all QC-passing samples regardless of PEDSEX vs phenotype ",
+            "Gender agreement. ", sex_check$n_mismatch,
+            " mismatching sample(s) recorded in audit CSV but not removed.")
+  }
 
   # Count final samples and SNPs
   clean_prefix <- file.path(qcdir, paste0(name, ".clean"))
@@ -1051,9 +929,8 @@ main <- function() {
     paste("  SNP missingness (lmissTh):   ", lmissTh),
     paste("  HWE p-value (hweTh):         ", hweTh),
     paste("  MAF threshold (mafTh):       ", mafTh),
-    paste("  Ancestry SD (europeanTh):    ", europeanTh),
-    paste("  Reference populations:       ", paste(refPopulation, collapse = ", ")),
     paste("  Genome build:                ", genomebuild),
+    paste("  Ancestry filter:             ", "delegated to B1b"),
     "",
     paste(rep("-", 72), collapse = ""),
     "OUTPUT FILES:",

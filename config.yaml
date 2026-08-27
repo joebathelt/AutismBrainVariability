@@ -24,3 +24,23 @@ motion_threshold: 0.2
 parcellations: "50 100 200"
 n_iterations: 50          # Number of consensus clustering iterations for C3
 target_communities: "5 15"  # Target community count range (min max) for C3
+
+# B1b ancestry: B1b runs a within-HCP-sample PCA (its eigenvec is the
+# canonical PC source consumed by C1/C3/C3b as nuisance covariates) plus a
+# 1KG-projected Mahalanobis diagnostic. No participants are dropped by
+# B1b — ancestry information enters the pipeline as PC covariates only.
+# n_ancestry_pcs: number of leading within-sample PCs used as covariates
+# in C1/C3/C3b. B1b writes the full --n-pcs-within (default 20) to
+# eigenvec, so increasing this value is a config edit only — no rerun of
+# B1b is needed.
+n_ancestry_pcs: 5
+
+# B1 sex filter: when false, B1 still runs the FAM PEDSEX vs phenotype
+# Gender cross-check and writes the audit CSV / .fail-sexcheck.IDs (so the
+# report shows what *would* have been dropped), but does NOT remove the
+# mismatching samples — the .clean triplet retains every QC-passing sample
+# regardless of sex agreement. Combined with B1b's ancestry filter being
+# disabled (PCs only, no participant exclusion), this approximates the
+# pre-d9554de pipeline used to generate the reproduce-landscape branch
+# results. Set to true for the canonical run.
+apply_sex_filter: false
