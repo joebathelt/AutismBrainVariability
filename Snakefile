@@ -425,7 +425,13 @@ rule continuous_heteroscedasticity_analysis:
         partition=f"{RESULTS_DIR}/C2b_selected_partition.csv"
     output:
         report=f"{PROJECT_DIR}/reports/C3_continuous_heteroscedasticity_report.txt",
-        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv"
+        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
+        # Written unconditionally by C3_continuous_heteroscedasticity_analysis.py
+        # (lines 866 and 886). variance_regression is an input to
+        # publication_figures_d2, so leaving it undeclared makes a clean-tree
+        # run fail with MissingInputException.
+        variance_regression=f"{RESULTS_DIR}/C3_variance_regression_sex.csv",
+        pgs_association=f"{RESULTS_DIR}/C3_pgs_metric_association.csv"
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         motion_threshold=config.get("motion_threshold", 0.2),
