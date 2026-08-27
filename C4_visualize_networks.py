@@ -182,7 +182,7 @@ def create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_node
         print(f'Computed average from {len(bootstrap_matrices)} valid bootstrap samples')
 
         # Save the bootstrap-averaged matrix for each PGS group
-        matrix_path = data_dir / f'C5_avg_connectivity_{group}_pgs_bootstrap.npy'
+        matrix_path = data_dir / f'C4_avg_connectivity_{group}_pgs_bootstrap.npy'
         np.save(matrix_path, final_avg_matrix)
         report.append(f'  Saved matrix to: {matrix_path.name}')
 
@@ -209,7 +209,7 @@ def create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_node
         plt.gca().set_xticks([])
         plt.gca().set_yticks([])
 
-        matrix_fig_path = figures_dir / f'C5_Connectivity_Matrix_{n_nodes}Nodes_{group}PGS_bootstrap.png'
+        matrix_fig_path = figures_dir / f'C4_Connectivity_Matrix_{n_nodes}Nodes_{group}PGS_bootstrap.png'
         plt.savefig(matrix_fig_path, dpi=FIGURE_DPI, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         report.append(f'  Saved matrix figure: {matrix_fig_path.name}')
@@ -240,7 +240,7 @@ def create_connectivity_matrices(pgs_df, mats_df_full, ids, partition_df, n_node
             edgecolors='black'
         )
 
-        network_fig_path = figures_dir / f'C5_Network_Visualisation_{n_nodes}Nodes_{group}PGS_bootstrap.png'
+        network_fig_path = figures_dir / f'C4_Network_Visualisation_{n_nodes}Nodes_{group}PGS_bootstrap.png'
         plt.savefig(network_fig_path, dpi=FIGURE_DPI, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         report.append(f'  Saved network figure: {network_fig_path.name}')
@@ -350,7 +350,7 @@ def create_exemplar_networks(pgs_df, mats_df_full, ids, partition_df, n_nodes,
                     edgecolors='black'
                 )
 
-                fname = (f'C5_Exemplar_Network_{n_nodes}Nodes_{group}PGS_'
+                fname = (f'C4_Exemplar_Network_{n_nodes}Nodes_{group}PGS_'
                          f'modQ{q+1}_e{i+1}_subj{subject}.png')
                 fig_path = figures_dir / fname
                 plt.savefig(fig_path, dpi=FIGURE_DPI, bbox_inches='tight', pad_inches=0.1)
@@ -366,7 +366,7 @@ def create_exemplar_networks(pgs_df, mats_df_full, ids, partition_df, n_nodes,
                 })
 
     index_df = pd.DataFrame(index_rows)
-    index_path = results_dir / 'C5_exemplar_subjects.csv'
+    index_path = results_dir / 'C4_exemplar_subjects.csv'
     index_df.to_csv(index_path, index=False)
     report.append(f"\n  Saved exemplar index: {index_path.name} ({len(index_df)} rows)")
 
@@ -487,7 +487,7 @@ def create_density_plots(graph_metrics_df, project_dir, n_bootstrap, sample_size
 
         plt.tight_layout()
 
-        fig_path = figures_dir / f'C5_Bootstrap_Density_Plot_{measure}.png'
+        fig_path = figures_dir / f'C4_Bootstrap_Density_Plot_{measure}.png'
         plt.savefig(fig_path, dpi=FIGURE_DPI, bbox_inches='tight', pad_inches=0.1)
         plt.close(fig)
         report.append(f"  Saved: {fig_path.name}")
@@ -635,7 +635,7 @@ def create_ellipse_extent_plot(graph_metrics_df, project_dir, n_bootstrap, sampl
     sns.despine(offset=6, trim=True)
     plt.tight_layout(pad=5)
 
-    fig_path = figures_dir / 'C5_Bootstrap_Ellipse_Extent_Plot.png'
+    fig_path = figures_dir / 'C4_Bootstrap_Ellipse_Extent_Plot.png'
     fig.savefig(fig_path, dpi=FIGURE_DPI, bbox_inches='tight', pad_inches=0.1)
     plt.close(fig)
 
@@ -655,7 +655,7 @@ def main():
     # Initialize report
     report = []
     report.append("=" * 80)
-    report.append("C5: NETWORK VISUALIZATION REPORT")
+    report.append("C4: NETWORK VISUALIZATION REPORT")
     report.append("=" * 80)
     report.append(f"\nProject directory: {project_dir}")
     report.append(f"Number of nodes (from C2b partition): {n_nodes}")
@@ -663,7 +663,7 @@ def main():
     report.append(f"Bootstrap sample size: {args.sample_size}")
 
     print("=" * 80)
-    print("C5: NETWORK VISUALIZATION")
+    print("C4: NETWORK VISUALIZATION")
     print("=" * 80)
 
     # Create directories
@@ -757,26 +757,26 @@ def main():
     report.append("SUMMARY")
     report.append("=" * 80)
     report.append("\nGenerated figures:")
-    report.append("  - C5_Connectivity_Matrix_*Nodes_*PGS_bootstrap.png (per group)")
-    report.append("  - C5_Network_Visualisation_*Nodes_*PGS_bootstrap.png (per group)")
-    report.append("  - C5_Exemplar_Network_*Nodes_*PGS_modQ*_e*_subj*.png "
+    report.append("  - C4_Connectivity_Matrix_*Nodes_*PGS_bootstrap.png (per group)")
+    report.append("  - C4_Network_Visualisation_*Nodes_*PGS_bootstrap.png (per group)")
+    report.append("  - C4_Exemplar_Network_*Nodes_*PGS_modQ*_e*_subj*.png "
                   "(4 exemplars x 4 quartiles x 3 groups = 48)")
-    report.append("  - C5_exemplar_subjects.csv (index of exemplar selections)")
-    report.append("  - C5_Bootstrap_Density_Plot_modularity.png")
-    report.append("  - C5_Bootstrap_Density_Plot_global_efficiency.png")
-    report.append("  - C5_Bootstrap_Ellipse_Extent_Plot.png")
+    report.append("  - C4_exemplar_subjects.csv (index of exemplar selections)")
+    report.append("  - C4_Bootstrap_Density_Plot_modularity.png")
+    report.append("  - C4_Bootstrap_Density_Plot_global_efficiency.png")
+    report.append("  - C4_Bootstrap_Ellipse_Extent_Plot.png")
 
     report.append("\n" + "=" * 80)
     report.append("END OF REPORT")
     report.append("=" * 80)
 
     # Save report
-    report_path = reports_dir / 'C5_visualize_networks_report.txt'
+    report_path = reports_dir / 'C4_visualize_networks_report.txt'
     with open(report_path, 'w') as f:
         f.write('\n'.join(report))
 
     print(f"\nReport saved to: {report_path}")
-    print(f"Figures saved to: {figures_dir}/C5_*.png")
+    print(f"Figures saved to: {figures_dir}/C4_*.png")
 
 
 if __name__ == "__main__":

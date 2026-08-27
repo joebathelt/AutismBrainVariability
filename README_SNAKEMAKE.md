@@ -108,7 +108,7 @@ snakemake --cores 1 --use-conda preprocess_phenotypic
 3. `find_fmri_communities` - Network community detection
 4. `evaluate_parcellations` - Parcellation resolution tuning (C2b)
 5. `continuous_heteroscedasticity_analysis` - Continuous BP / White / quantile tests + sex × PGS variance tests (C3)
-6. `visualize_networks` - Bootstrap connectivity/network panels, exemplar networks, density + ellipse plots (C4; writes `C5_*` files)
+6. `visualize_networks` - Bootstrap connectivity/network panels, exemplar networks, density + ellipse plots (C4)
 
 ### Quality Control
 - `check_data_retention` - Track subject IDs across pipeline steps
