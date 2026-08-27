@@ -78,7 +78,9 @@ def main():
     print(f"fMRI data: {len(fmri_ids)} subjects")
 
     # Create retention overview using behavioural as baseline
-    results_df = pd.DataFrame({'Subject': list(behavioural_ids)})
+    # sorted(), not list(): iterating a set gives an order that varies with
+    # PYTHONHASHSEED, which made this file differ byte-wise between runs.
+    results_df = pd.DataFrame({'Subject': sorted(behavioural_ids)})
     results_df['in_behavioural'] = True
     results_df['in_cfa'] = results_df['Subject'].isin(cfa_ids)
     results_df['in_pgs'] = results_df['Subject'].isin(pgs_ids)
