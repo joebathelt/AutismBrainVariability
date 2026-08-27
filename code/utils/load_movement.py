@@ -5,7 +5,10 @@ import pandas as pd
 from pathlib import Path
 
 # %%
-infolder = Path('/Users/joebathelt/Library/Containers/io.mountainduck/Data/Library/Application Support/Mountain Duck/Volumes.noindex/HCP.localized/hcp-openaccess/HCP_1200/')
+# Root of the HCP_1200 subject folders. Defaults to <project>/data/HCP_1200;
+# set HCP_1200_DIR to point at a mount or an external copy of the release.
+project_folder = Path(__file__).resolve().parents[2]
+infolder = Path(os.environ.get('HCP_1200_DIR', project_folder / 'data' / 'HCP_1200'))
 subject_list = sorted([f for f in os.listdir(infolder) if os.path.isdir(infolder / f)])
 
 # %%
@@ -29,5 +32,5 @@ for i, subject in enumerate(subject_list):
         'Movement_RelativeRMS_mean': np.mean(subject_data)
     })
 
-pd.DataFrame(movement_data).to_csv('movement_data.csv', index=False)
+pd.DataFrame(movement_data).to_csv(project_folder / 'data' / 'movement_data.csv', index=False)
 # %%

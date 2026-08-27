@@ -4,9 +4,10 @@ import numpy as np
 from pathlib import Path
 import pandas as pd
 
-# Set project paths
-project_folder = Path('/Users/joebathelt/Documents/1_Projects/BrainCompensation/')
-atlas_folder = project_folder / 'data/HCP_PTN1200/groupICA/'
+# Set project paths, derived from this file's location:
+# code/utils/<this file> -> parents[2] is the project root.
+project_folder = Path(__file__).resolve().parents[2]
+atlas_folder = project_folder / 'data' / 'HCP_PTN1200' / 'groupICA'
 
 for n_nodes in [15, 25, 50, 100, 200, 300]:
     atlas_file = atlas_folder / f'groupICA_3T_HCP1200_MSMAll_d{n_nodes}.ica/melodic_IC_sum.nii.gz'

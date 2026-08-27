@@ -1,7 +1,11 @@
 # Configuration file for Brain Compensation Snakemake workflow
 
 # Project directories
-project_dir: "/home/jmbathe/Documents/1_Projects/BrainCompensation-repro"
+#
+# project_dir is derived automatically from this file's location (the parent of
+# code/), so a fresh clone needs no edits. Uncomment only to point the workflow
+# at a tree elsewhere. The container overrides it with --config project_dir=/project.
+# project_dir: "/path/to/BrainCompensation"
 
 # Input data files (relative to data directory)
 # Adjust these to match your actual input file names

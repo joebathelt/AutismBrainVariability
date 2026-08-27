@@ -3,10 +3,18 @@ Snakemake workflow for Brain Compensation project
 Analysis pipeline for integrating phenotypic, genetic (PGS), and fMRI data
 """
 
+from pathlib import Path
+
 configfile: "config.yaml"
 
 # Define project paths
-PROJECT_DIR = config["project_dir"]
+#
+# project_dir defaults to the parent of the directory holding this Snakefile -
+# i.e. the project root - so a fresh clone runs with no editing. Set it in
+# config.yaml, or override on the command line, only when the working tree
+# lives somewhere other than alongside code/. The container does the latter:
+#   snakemake --config project_dir=/project
+PROJECT_DIR = config.get("project_dir") or str(Path(workflow.basedir).parent)
 DATA_DIR = f"{PROJECT_DIR}/data"
 CODE_DIR = f"{PROJECT_DIR}/code"
 GENETICS_INPUT_DIR = f"{DATA_DIR}/raw_anonymised"  # Original genetics data (read-only)

@@ -2,6 +2,11 @@
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib import rcParams
+from pathlib import Path
+
+# Write into the project's figures/ directory rather than an absolute path.
+figures_dir = Path(__file__).resolve().parents[2] / 'figures'
+figures_dir.mkdir(parents=True, exist_ok=True)
 
 rcParams['font.family'] = 'serif'
 rcParams['font.serif'] = ['CMU']
@@ -26,7 +31,7 @@ orientation='horizontal')
 # Adjust tick label size to fit better
 cb1.ax.tick_params(labelsize=8)
 
-plt.savefig('/Users/joebathelt/Desktop/colorbar.png', dpi=300, bbox_inches='tight', 
+plt.savefig(figures_dir / 'colourbar_coolwarm.png', dpi=300, bbox_inches='tight',
             pad_inches=0.1)
 
 # %%
@@ -48,7 +53,7 @@ cb1.ax.set_xticks([-0.3, 0.3])
 # Set the background colour to transparent
 cb1.ax.set_facecolor('none')
 
-plt.savefig('/Users/joebathelt/Desktop/colorbar.png', dpi=300, bbox_inches='tight', 
+plt.savefig(figures_dir / 'colourbar_RdBu.png', dpi=300, bbox_inches='tight',
             pad_inches=0.1)
 
 # %%
