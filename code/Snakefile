@@ -500,7 +500,8 @@ rule visualize_networks:
     params:
         matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
         n_bootstrap=config.get("c4_n_bootstrap", 1000),
-        sample_size=config.get("c4_sample_size", 90)
+        sample_size=config.get("c4_sample_size", 90),
+        seed=config.get("c4_seed", 42)
     conda:
         "environment.yml"
     threads: config.get("threads", 4)
@@ -519,7 +520,8 @@ rule visualize_networks:
             --ids {input.ids} \
             --matrices-dir {params.matrices_dir} \
             --n-bootstrap {params.n_bootstrap} \
-            --sample-size {params.sample_size} > {log} 2>&1
+            --sample-size {params.sample_size} \
+            --seed {params.seed} > {log} 2>&1
         """
 
 

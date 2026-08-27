@@ -87,6 +87,8 @@ def parse_args():
                         help="Number of bootstrap samples (default: 1000)")
     parser.add_argument("--sample-size", type=int, default=90,
                         help="Bootstrap sample size (default: 90)")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed for the bootstrap (default: 42)")
     return parser.parse_args()
 
 
@@ -649,6 +651,12 @@ def main():
     args = parse_args()
     project_dir = Path(args.project)
 
+    # Seed the global NumPy RNG so the bootstraps are reproducible. Without
+    # this the ellipse-extent confidence intervals moved in the 4th decimal
+    # between otherwise identical runs. Matches C3's np.random.seed() usage
+    # and D2/D3's --seed argument.
+    np.random.seed(args.seed)
+
     # Parcellation size is inherited from the C2b-selected partition
     n_nodes = len(pd.read_csv(args.partition))
 
@@ -661,6 +669,7 @@ def main():
     report.append(f"Number of nodes (from C2b partition): {n_nodes}")
     report.append(f"Number of bootstrap samples: {args.n_bootstrap}")
     report.append(f"Bootstrap sample size: {args.sample_size}")
+    report.append(f"Random seed: {args.seed}")
 
     print("=" * 80)
     print("C4: NETWORK VISUALIZATION")
