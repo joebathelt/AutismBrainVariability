@@ -186,7 +186,10 @@ def calculate_network_metrics(merged_df, partition_file, n_nodes, threshold, rep
         global_efficiency = nx.global_efficiency(G)
 
         results.append({
-            'Subject': subject_id,
+            # Real participant ID (merged_df's index is the positional row
+            # index of the pre-QC merge, not the ID). Needed by C3b to join
+            # Family_ID for the family-structure sensitivity analysis.
+            'Subject': row['Subject'],
             'modularity': modularity,
             'global_efficiency': global_efficiency,
             'Social_Score': row['Social_Score'],

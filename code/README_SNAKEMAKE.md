@@ -104,10 +104,12 @@ snakemake --cores 1 --use-conda preprocess_phenotypic
 
 ### Phase C: fMRI Analysis
 1. `univariate_fmri_prediction` - Univariate prediction models
+   - `family_aware_edgewise_c1b` - C1 edges re-tested with family cluster-robust SEs and family LMMs (C1b)
 2. `multivariate_fmri_prediction` - Multivariate prediction models
 3. `find_fmri_communities` - Network community detection
 4. `evaluate_parcellations` - Parcellation resolution tuning (C2b)
 5. `continuous_heteroscedasticity_analysis` - Continuous BP / White / quantile tests + sex × PGS variance tests (C3)
+   - `family_structure_sensitivity_c3b` - C3 inference with family clustering / random effects / family bootstrap + permutation (C3b)
 6. `visualize_networks` - Bootstrap connectivity/network panels, exemplar networks, density + ellipse plots (C4)
 
 ### Quality Control

@@ -50,6 +50,8 @@ rule all:
 
         # Phase C: fMRI analysis
         f"{PROJECT_DIR}/reports/C1_run_univariate_fMRI_prediction_report.txt",
+        f"{PROJECT_DIR}/reports/C1b_family_aware_edgewise_report.txt",
+        f"{RESULTS_DIR}/C1b_family_edgewise_counts.csv",
         f"{PROJECT_DIR}/reports/C2_find_communities_fMRI_report.txt",
         f"{PROJECT_DIR}/reports/C2b_evaluate_parcellations_report.txt",
         f"{RESULTS_DIR}/C2b_parcellation_evaluation.csv",
@@ -57,6 +59,10 @@ rule all:
         f"{PROJECT_DIR}/figures/C2b_parcellation_tuning_curves.png",
         f"{PROJECT_DIR}/reports/C3_continuous_heteroscedasticity_report.txt",
         f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
+        f"{PROJECT_DIR}/reports/C3b_family_structure_sensitivity_report.txt",
+        f"{RESULTS_DIR}/C3b_family_sensitivity_summary.csv",
+        f"{RESULTS_DIR}/C3b_family_icc.csv",
+        f"{PROJECT_DIR}/figures/C3b_family_sensitivity_forest.png",
         f"{PROJECT_DIR}/reports/C4_visualize_networks_report.txt",
         f"{RESULTS_DIR}/C4_exemplar_subjects.csv",
         f"{PROJECT_DIR}/figures/C4_Bootstrap_Ellipse_Extent_Plot.png",
@@ -358,6 +364,57 @@ rule univariate_fmri_prediction:
         """
 
 
+rule family_aware_edgewise_c1b:
+    """Family-structure sensitivity analysis for the C1 edge-wise tests (C1b).
+
+    Re-tests every edge with family cluster-robust (CR1) standard errors
+    (cluster = HCP Family_ID) and confirms the FDR-significant edges with a
+    family random-intercept mixed model. Reuses C1's data preparation by
+    import, so the primary Pearson/FDR results are reproduced exactly and
+    persisted per edge (C1 itself only reports counts)."""
+    input:
+        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
+        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
+        movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C1b_family_aware_edgewise_report.txt",
+        counts=f"{RESULTS_DIR}/C1b_family_edgewise_counts.csv",
+        edge_stats=expand(f"{RESULTS_DIR}/C1b_edge_stats_{{n}}nodes_{{test}}.csv",
+                          n=config.get("parcellations", "50 100 200").split(),
+                          test=["social", "pgs", "interaction"])
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        motion_threshold=config.get("motion_threshold", 0.2),
+        parcellations=config.get("parcellations", "50 100 200"),
+        mixedlm_flag=("--mixedlm" if config.get("c1b_mixedlm", True)
+                      else "--no-mixedlm")
+    conda:
+        "environment.yml"
+    threads: config.get("threads", 4)
+    resources:
+        mem_mb=config.get("mem_mb", 8000)
+    log:
+        f"{LOGS_DIR}/C1b_family_aware_edgewise.log"
+    shell:
+        """
+        python {CODE_DIR}/C1b_family_aware_edgewise.py \
+            --project {PROJECT_DIR} \
+            --social {input.social} \
+            --pgs {input.pgs} \
+            --behavioural {input.behavioural} \
+            --phenotypic {input.phenotypic} \
+            --movement {input.movement} \
+            --ids {input.ids} \
+            --matrices-dir {params.matrices_dir} \
+            --motion-threshold {params.motion_threshold} \
+            --parcellations {params.parcellations} \
+            {params.mixedlm_flag} > {log} 2>&1
+        """
+
+
 rule find_fmri_communities:
     """Identify network communities in fMRI data"""
     input:
@@ -465,6 +522,49 @@ rule continuous_heteroscedasticity_analysis:
             --partition {input.partition} \
             --threshold {params.threshold} \
             --motion-threshold {params.motion_threshold} > {log} 2>&1
+        """
+
+
+rule family_structure_sensitivity_c3b:
+    """Family-structure sensitivity analysis for the C3 tests (C3b).
+
+    Re-examines the mean-level association, the sex x PGS variance regression
+    and the decile / quantile-bin variance-trend tests while respecting the
+    HCP family structure: family cluster-robust SEs, family random-intercept
+    mixed models, a family cluster bootstrap and family-block permutation
+    (exchangeability blocks = equal-size families, incl. Freedman-Lane for the
+    headline interaction). Reads the C3 per-subject table; primary C3 outputs
+    are untouched."""
+    input:
+        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
+        variance_regression=f"{RESULTS_DIR}/C3_variance_regression_sex.csv",
+        pgs_association=f"{RESULTS_DIR}/C3_pgs_metric_association.csv",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/C3b_family_structure_sensitivity_report.txt",
+        summary=f"{RESULTS_DIR}/C3b_family_sensitivity_summary.csv",
+        icc=f"{RESULTS_DIR}/C3b_family_icc.csv",
+        figure=f"{PROJECT_DIR}/figures/C3b_family_sensitivity_forest.png"
+    params:
+        n_bootstrap=config.get("c3b_n_bootstrap", 5000),
+        n_perm=config.get("c3b_n_perm", 10000),
+        seed=config.get("c3b_seed", 42)
+    conda:
+        "environment.yml"
+    threads: 1
+    resources:
+        mem_mb=config.get("c3b_mem_mb", 4000)
+    log:
+        f"{LOGS_DIR}/C3b_family_structure_sensitivity.log"
+    shell:
+        """
+        python {CODE_DIR}/C3b_family_structure_sensitivity.py \
+            --project {PROJECT_DIR} \
+            --results {input.results} \
+            --phenotypic {input.phenotypic} \
+            --n-bootstrap {params.n_bootstrap} \
+            --n-perm {params.n_perm} \
+            --seed {params.seed} > {log} 2>&1
         """
 
 
@@ -652,6 +752,9 @@ rule clean:
         rm -f {PROJECT_DIR}/reports/C4_visualize_networks_report.txt
         rm -f {PROJECT_DIR}/results/C4_exemplar_subjects.csv
         rm -f {PROJECT_DIR}/figures/C4_*.png
+        rm -f {PROJECT_DIR}/reports/C1b_family_aware_edgewise_report.txt
+        rm -f {PROJECT_DIR}/reports/C3b_family_structure_sensitivity_report.txt
+        rm -f {PROJECT_DIR}/figures/C3b_family_sensitivity_forest.png
         rm -f {DATA_DIR}/C4_avg_connectivity_*.npy
 
         # Quality control outputs

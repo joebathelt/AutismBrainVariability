@@ -39,3 +39,10 @@ n_components: 10          # Number of PLS components
 n_bootstrap: 1000         # Number of bootstrap iterations for PLS
 n_iterations: 50          # Number of consensus clustering iterations for C3
 target_communities: "5 15"  # Target community count range (min max) for C3
+
+# Family-structure sensitivity analyses (C3b / C1b)
+# Family_ID from the phenotypic table is the cluster / random-effect grouping.
+c3b_n_bootstrap: 5000     # family cluster-bootstrap replicates
+c3b_n_perm: 10000         # family-block permutations
+c3b_seed: 42
+c1b_mixedlm: true         # fit family random-intercept LMMs for significant edges

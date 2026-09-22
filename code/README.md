@@ -44,9 +44,11 @@ code/
   B5_evalute_BLUP_prediction.py       # BLUP evaluation + residualized PGS
 
   C1_run_univariate_fMRI_prediction.py      # Edge-wise connectivity ~ social / PGS
+  C1b_family_aware_edgewise.py              # C1 re-tested with family cluster-robust SEs + family LMMs
   C2_find_communities_fMRI.py               # Consensus community detection
   C2b_evaluate_communities.py               # Parcellation resolution tuning
   C3_continuous_heteroscedasticity_analysis.py   # Continuous BP / White / quantile + sex × PGS variance tests
+  C3b_family_structure_sensitivity.py       # C3 inference with family clustering / random effects
 
   utils/                              # Shared helpers (ID tracking, connectome viz, …)
 
@@ -159,6 +161,22 @@ Outputs are written to `project_dir/{results,reports,figures,logs}/`:
 - Heteroscedasticity analysis (C3) runs at the single parcellation chosen
   by C2b — `n_nodes` is derived from the selected partition. See
   [C3_continuous_heteroscedasticity_analysis.py](C3_continuous_heteroscedasticity_analysis.py).
+- **Family structure.** The HCP sample contains MZ/DZ twins and siblings
+  (`Family_ID` in the phenotypic table). The primary C1/C3 tests treat
+  participants as independent; the companion scripts
+  [C1b_family_aware_edgewise.py](C1b_family_aware_edgewise.py) and
+  [C3b_family_structure_sensitivity.py](C3b_family_structure_sensitivity.py)
+  repeat every inference with family cluster-robust (CR1) standard errors,
+  family random-intercept mixed models (statsmodels `MixedLM`), a family
+  cluster bootstrap and family-block permutation (whole families of equal
+  size exchanged; Freedman–Lane for the sex × PGS variance interaction).
+  They read the primary outputs and never alter them; the primary tables are
+  reproduced as a startup guard. Resampling sizes and the seed are set by
+  `c3b_*` / `c1b_*` keys in [config.yaml](config.yaml). C3b also reports the
+  family ICC, design effect and MZ/DZ pair correlations of every analysis
+  variable. Note that the BLUP-extended PGS is nearly constant within
+  families (sibling correlation ≈ 0.97), so its effective sample size is
+  close to the number of families.
 
 ## Citation
 
