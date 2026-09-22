@@ -524,8 +524,10 @@ def sample_statistics(y, pgs, male, n_deciles=N_DECILES, n_bins=N_BINS):
     Returns
     -------
     dict with
-      vr_pgs_beta, vr_interaction_beta, vr_interaction_t :
+      vr_pgs_beta, vr_pgs_t, vr_interaction_beta, vr_interaction_t :
           auxiliary (resid^2) regression coefficients and classical t
+      assoc_metric_beta/_t, assoc_interaction_beta/_t :
+          mean-level association model pgs_z ~ metric + male + metric:male
       decile_r_F, decile_r_M, decile_diff : decile-SD trend per sex, M - F
       bin_r_F, bin_r_M, bin_diff : quantile-bin variance trend per sex, M - F
     """
@@ -540,11 +542,24 @@ def sample_statistics(y, pgs, male, n_deciles=N_DECILES, n_bins=N_BINS):
     b2 = XtX_inv @ X.T @ e2
     resid2 = e2 - X @ b2
     sigma2 = resid2 @ resid2 / (n - X.shape[1])
-    se_int = np.sqrt(sigma2 * XtX_inv[3, 3])
+    se2 = np.sqrt(sigma2 * np.diag(XtX_inv))
+
+    # Mean-level association model: pgs_z ~ metric + male + metric:male
+    Xa = np.column_stack([np.ones(n), y, male, y * male])
+    XtXa_inv = np.linalg.inv(Xa.T @ Xa)
+    ba = XtXa_inv @ Xa.T @ pgs
+    ra = pgs - Xa @ ba
+    s2a = ra @ ra / (n - Xa.shape[1])
+    sea = np.sqrt(s2a * np.diag(XtXa_inv))
 
     out = {'vr_pgs_beta': float(b2[1]),
+           'vr_pgs_t': float(b2[1] / se2[1]),
            'vr_interaction_beta': float(b2[3]),
-           'vr_interaction_t': float(b2[3] / se_int)}
+           'vr_interaction_t': float(b2[3] / se2[3]),
+           'assoc_metric_beta': float(ba[1]),
+           'assoc_metric_t': float(ba[1] / sea[1]),
+           'assoc_interaction_beta': float(ba[3]),
+           'assoc_interaction_t': float(ba[3] / sea[3])}
     for label, code in zip(SEX_LEVELS, (0.0, 1.0)):
         mask = male == code
         out[f'decile_r_{label}'] = _binned_dispersion_trend(
@@ -569,8 +584,55 @@ STAT_META = {
 }
 
 
+# Permutation tests use a pivotal statistic (classical t) for regression
+# coefficients and the trend statistics themselves for the binned tests.
+# key of the reported estimate: (test, term, sidedness, key of the statistic)
+PERM_META = {
+    'vr_interaction_beta': ('variance_regression', 'pgs_z:Gender', 'two',
+                            'vr_interaction_t'),
+    'vr_pgs_beta': ('variance_regression', 'pgs_z', 'two', 'vr_pgs_t'),
+    'assoc_metric_beta': ('association', 'metric', 'two', 'assoc_metric_t'),
+    'assoc_interaction_beta': ('association', 'metric:Gender', 'two',
+                               'assoc_interaction_t'),
+    'decile_r_F': ('decile_trend', 'trend_r_F', 'one', 'decile_r_F'),
+    'decile_r_M': ('decile_trend', 'trend_r_M', 'one', 'decile_r_M'),
+    'decile_diff': ('decile_trend', 'M - F', 'two', 'decile_diff'),
+    'bin_r_F': ('balanced_bin_trend', 'trend_r_F', 'one', 'bin_r_F'),
+    'bin_r_M': ('balanced_bin_trend', 'trend_r_M', 'one', 'bin_r_M'),
+    'bin_diff': ('balanced_bin_trend', 'M - F', 'two', 'bin_diff'),
+}
+
+
 def _stats_frame(records):
     return pd.DataFrame.from_records(records)
+
+
+def _perm_rows(observed, null, metric, method, note, n, n_fam, report):
+    """Summary rows for one permutation scheme, all PERM_META statistics."""
+    rows = []
+    for key, (test, term, sided, stat_key) in PERM_META.items():
+        obs_stat = observed[stat_key]
+        nd = null[stat_key].values
+        nd = nd[~np.isnan(nd)]
+        if sided == 'two':
+            p = (1 + np.sum(np.abs(nd) >= abs(obs_stat))) / (1 + len(nd))
+            side = 'two-sided'
+        else:
+            p = (1 + np.sum(nd >= obs_stat)) / (1 + len(nd))
+            side = 'one-sided (increasing)'
+        rows.append({
+            'metric': metric, 'test': test, 'method': method, 'term': term,
+            'estimate': observed[key], 'se': np.nan,
+            'ci_low': float(np.percentile(nd, 2.5)),
+            'ci_high': float(np.percentile(nd, 97.5)),
+            'pvalue': float(p), 'statistic': float(obs_stat), 'df': np.nan,
+            'n': int(n), 'n_families': int(n_fam), 'B': int(len(nd)),
+            'note': f"{side}; statistic = {stat_key}; {note}; "
+                    "ci = null 2.5-97.5 percentiles of the statistic",
+        })
+        report.append(f"    {test:<20} {term:<12} obs = {observed[key]:9.4e} "
+                      f"(stat {obs_stat:7.3f}), perm p = {p:.4f}")
+    return rows
 
 
 # %%
@@ -630,20 +692,19 @@ def family_bootstrap(df, metric, fam_idx, n_boot, rng, report):
 # 6. FAMILY-BLOCK PERMUTATION
 # =============================================================================
 
-def _whole_family_permutation(fam_idx, rng):
-    """Row index map for one whole-family exchange of a per-subject column.
+def _block_permutation_source(blocks, rng):
+    """Row-index map for one exchange of whole families within blocks.
 
-    Families are exchangeable only with families of the same size; within a
-    size class the family order is permuted and members are mapped
-    position-wise. Size classes with a single family stay fixed.
-    Returns `source` such that permuted[i] = original[source[i]].
+    `blocks` is a list of exchangeability blocks; each block is a list of
+    member-index arrays of identical length (and, for sex-preserving
+    blocks, identical within-family sex pattern). Within a block the family
+    order is permuted and members are mapped position-wise. Blocks with a
+    single family stay fixed. Returns `source` such that
+    permuted[i] = original[source[i]].
     """
-    n = sum(len(f) for f in fam_idx)
+    n = sum(len(f) for block in blocks for f in block)
     source = np.arange(n)
-    by_size = {}
-    for f in fam_idx:
-        by_size.setdefault(len(f), []).append(f)
-    for size, fams in by_size.items():
+    for fams in blocks:
         if len(fams) < 2:
             continue
         perm = rng.permutation(len(fams))
@@ -652,18 +713,70 @@ def _whole_family_permutation(fam_idx, rng):
     return source
 
 
-def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
-    """Two exchangeability-block permutation tests.
+def family_size_blocks(fam_idx):
+    """Exchangeability blocks = families of equal size (sex ignored)."""
+    by_size = {}
+    for f in fam_idx:
+        by_size.setdefault(len(f), []).append(f)
+    return [by_size[k] for k in sorted(by_size)]
 
-    (a) Whole-family PGS permutation: pgs_z is exchanged between families of
-        equal size; sex and the brain metric stay with the participant. The
-        null is 'PGS is unrelated to the metric distribution (in either
-        sex)'; the M - F trend differences are tested under that joint null.
-    (b) Freedman-Lane for the pgs_z:Gender variance-interaction coefficient:
-        residuals of the reduced auxiliary model (resid^2 ~ pgs_z + male) are
-        exchanged with the same family-block scheme, and the full auxiliary
-        model is refitted. This targets the interaction with the PGS and sex
-        main effects as nuisance terms.
+
+def family_sex_blocks(fam_idx, male):
+    """Exchangeability blocks = families of equal size AND identical sex
+    composition, with members ordered by sex within each family, so that a
+    position-wise exchange gives every participant a same-sex PGS."""
+    male = np.asarray(male)
+    by_key = {}
+    for f in fam_idx:
+        order = np.lexsort((f, male[f]))       # sex, then Subject order
+        f_sorted = f[order]
+        key = (len(f), tuple(int(v) for v in male[f_sorted]))
+        by_key.setdefault(key, []).append(f_sorted)
+    return [by_key[k] for k in sorted(by_key)]
+
+
+def _within_sex_participant_source(male, rng):
+    """Row-index map for a participant-level permutation of the PGS within
+    each sex (family structure ignored)."""
+    source = np.arange(len(male))
+    for code in (0.0, 1.0):
+        idx = np.flatnonzero(male == code)
+        source[idx] = idx[rng.permutation(len(idx))]
+    return source
+
+
+def _whole_family_permutation(fam_idx, rng):
+    """Whole-family exchange of a per-subject column within size classes."""
+    return _block_permutation_source(family_size_blocks(fam_idx), rng)
+
+
+def _describe_blocks(blocks, label, report):
+    sizes = sorted(len(b) for b in blocks)
+    fixed = sum(1 for b in blocks if len(b) < 2)
+    report.append(f"  {label}: {len(blocks)} blocks "
+                  f"(families per block: min {sizes[0]}, max {sizes[-1]}); "
+                  f"{fixed} single-family block(s) kept fixed")
+
+
+def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
+    """Exchangeability-block permutation tests.
+
+    (a) perm_whole_family: PGS exchanged between whole families of equal
+        size; sex and the brain metric stay with the participant. Null:
+        PGS is unrelated to the metric distribution (in either sex).
+    (b) perm_within_sex: participant-level permutation of the PGS within
+        each sex, ignoring family structure (the reviewer-requested test;
+        exact under the null that PGS carries no information within sex,
+        conditional on independence of participants).
+    (c) perm_within_sex_family: PGS exchanged between whole families of
+        identical size and sex composition, members mapped by sex, so every
+        participant receives a same-sex PGS while family clustering is
+        preserved.
+    (d) perm_freedman_lane: Freedman-Lane test of the pgs_z:Gender
+        variance-regression coefficient with the PGS and sex main effects as
+        nuisance terms; residuals of the reduced auxiliary model are
+        exchanged within the equal-size family blocks.
+    Regression coefficients are tested with the classical t statistic.
     """
     y = df[metric].values.astype(float)
     pgs = df['pgs_z'].values.astype(float)
@@ -671,44 +784,35 @@ def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
     n = len(y)
     n_fam = len(fam_idx)
     observed = sample_statistics(y, pgs, male)
-
-    # ---- (a) whole-family PGS permutation
-    t0 = time.time()
-    records = []
-    for _ in range(n_perm):
-        src = _whole_family_permutation(fam_idx, rng)
-        records.append(sample_statistics(y, pgs[src], male))
-    null = _stats_frame(records)
-    elapsed_a = time.time() - t0
-
     rows = []
-    report.append(f"  {metric}: {n_perm} whole-family PGS permutations "
-                  f"({elapsed_a:.1f} s)")
-    for key, (test, term, sided) in STAT_META.items():
-        if key == 'vr_pgs_beta':
-            continue
-        obs = observed[key]
-        nd = null[key].values
-        nd = nd[~np.isnan(nd)]
-        if sided == 'two':
-            p = (1 + np.sum(np.abs(nd) >= abs(obs))) / (1 + len(nd))
-            note = 'two-sided; null = PGS exchangeable across equal-size families'
-        else:
-            p = (1 + np.sum(nd >= obs)) / (1 + len(nd))
-            note = 'one-sided (increasing); null = PGS exchangeable across equal-size families'
-        rows.append({
-            'metric': metric, 'test': test, 'method': 'perm_whole_family',
-            'term': term, 'estimate': obs, 'se': np.nan,
-            'ci_low': float(np.percentile(nd, 2.5)),
-            'ci_high': float(np.percentile(nd, 97.5)),
-            'pvalue': float(p), 'statistic': np.nan, 'df': np.nan,
-            'n': int(n), 'n_families': int(n_fam), 'B': int(len(nd)),
-            'note': note + '; ci = null 2.5-97.5 percentiles',
-        })
-        report.append(f"    {test:<20} {term:<12} obs = {obs:9.4e}, "
-                      f"perm p = {p:.4f}")
 
-    # ---- (b) Freedman-Lane for the interaction coefficient
+    schemes = (
+        ('perm_whole_family',
+         lambda: _block_permutation_source(family_size_blocks(fam_idx), rng),
+         'null = PGS exchangeable across equal-size families'),
+        ('perm_within_sex',
+         lambda: _within_sex_participant_source(male, rng),
+         'null = PGS exchangeable across participants within sex '
+         '(family structure ignored)'),
+        ('perm_within_sex_family',
+         lambda: _block_permutation_source(
+             family_sex_blocks(fam_idx, male), rng),
+         'null = PGS exchangeable across families of identical size and '
+         'sex composition, members matched by sex'),
+    )
+    for method, make_source, note in schemes:
+        t0 = time.time()
+        records = []
+        for _ in range(n_perm):
+            src = make_source()
+            records.append(sample_statistics(y, pgs[src], male))
+        null = _stats_frame(records)
+        report.append(f"  {metric}: {method} ({n_perm} permutations, "
+                      f"{time.time() - t0:.1f} s)")
+        rows += _perm_rows(observed, null, metric, method, note, n, n_fam,
+                           report)
+
+    # ---- Freedman-Lane for the interaction coefficient
     t0 = time.time()
     X_full = np.column_stack([np.ones(n), pgs, male, pgs * male])
     X_red = X_full[:, :3]
@@ -733,7 +837,6 @@ def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
         src = _whole_family_permutation(fam_idx, rng)
         t_null[i] = _t_interaction(yhat_red + r_red[src])
     p_fl = (1 + np.sum(np.abs(t_null) >= abs(t_obs))) / (1 + n_perm)
-    elapsed_b = time.time() - t0
     rows.append({
         'metric': metric, 'test': 'variance_regression',
         'method': 'perm_freedman_lane', 'term': 'pgs_z:Gender',
@@ -746,7 +849,7 @@ def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
     })
     report.append(f"  {metric}: Freedman-Lane permutation of pgs_z:Gender "
                   f"(t_obs = {t_obs:.3f}): p = {p_fl:.4f} "
-                  f"({n_perm} permutations, {elapsed_b:.1f} s)")
+                  f"({n_perm} permutations, {time.time() - t0:.1f} s)")
     return rows
 
 
@@ -862,14 +965,16 @@ def plot_forest(summary, figure_path):
                             va='center', ha='left', color='#444')
                 labels.append(label)
                 ys.append(ypos)
-            perm = sub[sub.method.isin(['perm_whole_family',
-                                        'perm_freedman_lane'])]
+            perm_labels = [('perm_within_sex', 'Permutation within sex'),
+                           ('perm_within_sex_family',
+                            'Permutation within sex, family blocks'),
+                           ('perm_whole_family', 'Permutation, whole-family'),
+                           ('perm_freedman_lane', 'Permutation, Freedman-Lane')]
             txt = []
-            for _, r in perm.iterrows():
-                lab = ('Permutation, whole-family'
-                       if r.method == 'perm_whole_family'
-                       else 'Permutation, Freedman-Lane')
-                txt.append(f"{lab}: p = {r.pvalue:.3f}")
+            for method, lab in perm_labels:
+                r = sub[sub.method == method]
+                if not r.empty:
+                    txt.append(f"{lab}: p = {r.iloc[0].pvalue:.3f}")
             n_txt = len(txt)
             if txt:
                 ax.text(0.0, k + 0.55 + 0.45 * n_txt, "\n".join(txt),
@@ -1028,12 +1133,11 @@ def main():
     report.append("FAMILY-BLOCK PERMUTATION (exchangeability blocks = "
                   "equal-size families)")
     report.append("=" * 60)
-    sizes = pd.Series([len(f) for f in fam_idx]).value_counts().sort_index()
-    fixed = [int(s) for s, c in sizes.items() if c < 2]
-    report.append("  Families exchanged within size classes: " + ", ".join(
-        f"size {int(s)} (x{int(c)})" for s, c in sizes.items() if c >= 2))
-    if fixed:
-        report.append(f"  Size classes with a single family (kept fixed): {fixed}")
+    _describe_blocks(family_size_blocks(fam_idx), "size blocks", report)
+    _describe_blocks(family_sex_blocks(fam_idx, df['male'].values),
+                     "size x sex-composition blocks", report)
+    report.append("  perm_within_sex: participant-level permutation within "
+                  "sex (family structure ignored)")
     for metric in METRICS:
         rows += family_block_permutation(df, metric, fam_idx, args.n_perm,
                                          rng_perm, report)
@@ -1053,7 +1157,8 @@ def main():
                       & (summary.term == 'pgs_z:Gender')]
         for _, r in sub.iterrows():
             ci = (f"95% CI [{r.ci_low:.3e}, {r.ci_high:.3e}]"
-                  if np.isfinite(r.ci_low) else "")
+                  if np.isfinite(r.ci_low)
+                  and not r.method.startswith('perm') else "")
             report.append(f"  {r.method:<20} beta = {r.estimate:.4e}  {ci}  "
                           f"p = {r.pvalue:.4f} [{'SIG' if r.pvalue < 0.05 else 'NS'}]")
         for test, label in (('decile_trend', 'Decile-SD trend M - F'),
