@@ -721,20 +721,6 @@ def family_size_blocks(fam_idx):
     return [by_size[k] for k in sorted(by_size)]
 
 
-def family_sex_blocks(fam_idx, male):
-    """Exchangeability blocks = families of equal size AND identical sex
-    composition, with members ordered by sex within each family, so that a
-    position-wise exchange gives every participant a same-sex PGS."""
-    male = np.asarray(male)
-    by_key = {}
-    for f in fam_idx:
-        order = np.lexsort((f, male[f]))       # sex, then Subject order
-        f_sorted = f[order]
-        key = (len(f), tuple(int(v) for v in male[f_sorted]))
-        by_key.setdefault(key, []).append(f_sorted)
-    return [by_key[k] for k in sorted(by_key)]
-
-
 def _within_sex_participant_source(male, rng):
     """Row-index map for a participant-level permutation of the PGS within
     each sex (family structure ignored)."""
@@ -768,11 +754,7 @@ def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
         each sex, ignoring family structure (the reviewer-requested test;
         exact under the null that PGS carries no information within sex,
         conditional on independence of participants).
-    (c) perm_within_sex_family: PGS exchanged between whole families of
-        identical size and sex composition, members mapped by sex, so every
-        participant receives a same-sex PGS while family clustering is
-        preserved.
-    (d) perm_freedman_lane: Freedman-Lane test of the pgs_z:Gender
+    (c) perm_freedman_lane: Freedman-Lane test of the pgs_z:Gender
         variance-regression coefficient with the PGS and sex main effects as
         nuisance terms; residuals of the reduced auxiliary model are
         exchanged within the equal-size family blocks.
@@ -794,11 +776,6 @@ def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
          lambda: _within_sex_participant_source(male, rng),
          'null = PGS exchangeable across participants within sex '
          '(family structure ignored)'),
-        ('perm_within_sex_family',
-         lambda: _block_permutation_source(
-             family_sex_blocks(fam_idx, male), rng),
-         'null = PGS exchangeable across families of identical size and '
-         'sex composition, members matched by sex'),
     )
     for method, make_source, note in schemes:
         t0 = time.time()
@@ -966,8 +943,6 @@ def plot_forest(summary, figure_path):
                 labels.append(label)
                 ys.append(ypos)
             perm_labels = [('perm_within_sex', 'Permutation within sex'),
-                           ('perm_within_sex_family',
-                            'Permutation within sex, family blocks'),
                            ('perm_whole_family', 'Permutation, whole-family'),
                            ('perm_freedman_lane', 'Permutation, Freedman-Lane')]
             txt = []
@@ -1134,8 +1109,6 @@ def main():
                   "equal-size families)")
     report.append("=" * 60)
     _describe_blocks(family_size_blocks(fam_idx), "size blocks", report)
-    _describe_blocks(family_sex_blocks(fam_idx, df['male'].values),
-                     "size x sex-composition blocks", report)
     report.append("  perm_within_sex: participant-level permutation within "
                   "sex (family structure ignored)")
     for metric in METRICS:
