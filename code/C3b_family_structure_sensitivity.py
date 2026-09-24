@@ -916,6 +916,51 @@ def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
     return rows
 
 
+def sexcheck_sensitivity(df, sexcheck_csv, report):
+    """Refit the primary C3 models without the individuals flagged by the
+    B1b chrX sex check (discordant or ambiguous F)."""
+    report.append("")
+    report.append("=" * 60)
+    report.append("SENSITIVITY: EXCLUDING chrX SEX-CHECK FLAGGED INDIVIDUALS")
+    report.append("=" * 60)
+    sc = pd.read_csv(sexcheck_csv, dtype={'IID': str})
+    flagged = set(sc.loc[sc['flagged'].astype(bool), 'IID'])
+    keep = ~df['Subject'].isin(flagged)
+    n_drop = int((~keep).sum())
+    report.append(f"  Flagged in B1b: {len(flagged)}; present in the analytic "
+                  f"sample: {n_drop}; refitting on n = {int(keep.sum())}")
+    sub = df[keep].reset_index(drop=True)
+    n_fam = sub['family'].nunique()
+    rows = []
+    scratch = []
+    vr = test_variance_regression_by_sex(sub, scratch)
+    assoc = test_pgs_graph_metric_association(sub, scratch)
+    note = f"primary OLS refitted without {n_drop} chrX sex-check flagged participants"
+    for metric in METRICS:
+        for term in _MAIN_COEF_NAMES:
+            rows.append({'metric': metric, 'test': 'variance_regression',
+                         'method': 'exclude_sexcheck_flagged', 'term': term,
+                         'estimate': vr[metric]['coefs'][term], 'se': np.nan,
+                         'ci_low': np.nan, 'ci_high': np.nan,
+                         'pvalue': vr[metric]['pvalues'][term],
+                         'statistic': np.nan, 'df': np.nan, 'n': int(len(sub)),
+                         'n_families': int(n_fam), 'B': np.nan, 'note': note})
+        for term in _ASSOC_COEF_NAMES:
+            rows.append({'metric': metric, 'test': 'association',
+                         'method': 'exclude_sexcheck_flagged', 'term': term,
+                         'estimate': assoc[metric]['coefs'][term], 'se': np.nan,
+                         'ci_low': np.nan, 'ci_high': np.nan,
+                         'pvalue': assoc[metric]['pvalues'][term],
+                         'statistic': np.nan, 'df': np.nan, 'n': int(len(sub)),
+                         'n_families': int(n_fam), 'B': np.nan, 'note': note})
+        report.append(f"  {metric:<18} variance pgs_z:Gender beta = "
+                      f"{vr[metric]['interaction_beta']:.4e}, "
+                      f"p = {vr[metric]['interaction_p']:.4f}; association "
+                      f"metric p = {assoc[metric]['pvalues']['metric']:.4f}, "
+                      f"metric:Gender p = {assoc[metric]['pvalues']['metric:Gender']:.4f}")
+    return rows
+
+
 # %%
 # =============================================================================
 # 7. PRIMARY-NUMBER GUARD
@@ -1141,6 +1186,10 @@ def main():
     parser.add_argument('--n-bootstrap', type=int, default=2000)
     parser.add_argument('--n-perm', type=int, default=5000)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--sexcheck', required=False,
+                        help='B1b_chrx_sexcheck.csv; if given, the primary '
+                             'models are refitted without the individuals '
+                             'flagged by the chrX sex check')
     parser.add_argument('--self-check', action='store_true',
                         help='run internal validity checks (slow; manual)')
     args = parser.parse_args()
@@ -1214,6 +1263,9 @@ def main():
     for metric in METRICS:
         rows += family_block_permutation(df, metric, fam_idx, args.n_perm,
                                          rng_perm, report)
+
+    if args.sexcheck:
+        rows += sexcheck_sensitivity(df, Path(args.sexcheck), report)
 
     summary = pd.DataFrame(rows, columns=SUMMARY_COLUMNS)
 

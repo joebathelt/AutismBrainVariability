@@ -43,6 +43,9 @@ rule all:
         # Phase B: Genetic/PGS analysis
         f"{QCDIR}/Neuro_Chip_anonymised.clean.bed",
         f"{PROJECT_DIR}/reports/B1_plinkQC_genotype_qc_report.txt",
+        f"{PROJECT_DIR}/reports/B1b_chrx_sex_check_report.txt",
+        f"{RESULTS_DIR}/B1b_chrx_sexcheck.csv",
+        f"{PROJECT_DIR}/figures/B1b_chrx_F_by_sex.png",
         f"{PLINK_DIR}/full_pgs_scores.snp.blp.profile",
         f"{PROJECT_DIR}/figures/B3_pgs_threshold_evaluation.png",
         f"{PROJECT_DIR}/figures/B5_blup_evaluation.png",
@@ -216,6 +219,42 @@ rule plinkqc_genotype_qc:
         Rscript {CODE_DIR}/B1_plinkQC_genotype_qc.R \
             --project {PROJECT_DIR} \
             --indir {params.indir_rel} \
+            --sex-check-method {params.sex_check_method} > {log} 2>&1
+        """
+
+
+rule chrx_sex_check_b1b:
+    """chrX heterozygosity (F) against phenotypic sex (B1b).
+
+    PLINK --check-sex with --make-founders (the HCP FAM has no founders, so
+    the PLINK default would mis-estimate X allele frequencies and give
+    F ~ 0.5 for every female). Reports the F distribution by demographic sex,
+    the discordant / ambiguous individuals and how B1 handled them, and
+    documents the founders-only artefact alongside."""
+    input:
+        bed=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.bed",
+        bim=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.bim",
+        fam=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised.fam",
+        demographics=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
+    output:
+        report=f"{PROJECT_DIR}/reports/B1b_chrx_sex_check_report.txt",
+        table=f"{RESULTS_DIR}/B1b_chrx_sexcheck.csv",
+        figure=f"{PROJECT_DIR}/figures/B1b_chrx_F_by_sex.png"
+    params:
+        bfile=f"{PREFILTER_INDIR}/Neuro_Chip_anonymised",
+        sex_check_method=config.get("sex_check_method", "demographics")
+    conda:
+        "environment.yml"
+    log:
+        f"{LOGS_DIR}/B1b_chrx_sex_check.log"
+    shell:
+        """
+        python {CODE_DIR}/B1b_chrx_sex_check.py \
+            --project {PROJECT_DIR} \
+            --bfile {params.bfile} \
+            --demographics {input.demographics} \
+            --phenotypic {input.phenotypic} \
             --sex-check-method {params.sex_check_method} > {log} 2>&1
         """
 
@@ -540,6 +579,7 @@ rule family_structure_sensitivity_c3b:
         results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv",
         variance_regression=f"{RESULTS_DIR}/C3_variance_regression_sex.csv",
         pgs_association=f"{RESULTS_DIR}/C3_pgs_metric_association.csv",
+        sexcheck=f"{RESULTS_DIR}/B1b_chrx_sexcheck.csv",
         phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}"
     output:
         report=f"{PROJECT_DIR}/reports/C3b_family_structure_sensitivity_report.txt",
@@ -564,6 +604,7 @@ rule family_structure_sensitivity_c3b:
             --project {PROJECT_DIR} \
             --results {input.results} \
             --phenotypic {input.phenotypic} \
+            --sexcheck {input.sexcheck} \
             --n-bootstrap {params.n_bootstrap} \
             --n-perm {params.n_perm} \
             --seed {params.seed} > {log} 2>&1
@@ -755,6 +796,8 @@ rule clean:
         rm -f {PROJECT_DIR}/results/C4_exemplar_subjects.csv
         rm -f {PROJECT_DIR}/figures/C4_*.png
         rm -f {PROJECT_DIR}/reports/C1b_family_aware_edgewise_report.txt
+        rm -f {PROJECT_DIR}/reports/B1b_chrx_sex_check_report.txt
+        rm -f {PROJECT_DIR}/figures/B1b_chrx_F_by_sex.png
         rm -f {PROJECT_DIR}/reports/C3b_family_structure_sensitivity_report.txt
         rm -f {PROJECT_DIR}/figures/C3b_family_sensitivity_forest.png
         rm -f {DATA_DIR}/C4_avg_connectivity_*.npy

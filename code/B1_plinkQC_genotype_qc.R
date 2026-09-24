@@ -274,7 +274,12 @@ precompute_plink_files <- function() {
   if (sex_check_method == "chrx" &&
       !file.exists(file.path(qcdir, paste0(name, ".sexcheck")))) {
     message("Running chrX sex check...")
-    plink("--bfile", file.path(indir, name), "--check-sex",
+    # --make-founders is essential: the HCP FAM has parental IDs for every
+    # sample, so PLINK sees no founders and would otherwise estimate X allele
+    # frequencies from an empty founder set, giving F ~ 0.5 for all females.
+    plink("--bfile", file.path(indir, name),
+          "--make-founders",
+          "--check-sex",
           "--out", file.path(qcdir, name))
   }
 
