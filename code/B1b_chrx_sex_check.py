@@ -192,7 +192,7 @@ def main():
         ax.set_ylabel('participants', fontsize=7)
         ax.set_title(title, fontsize=7)
         ax.tick_params(labelsize=6.5)
-        ax.legend(fontsize=6, frameon=False)
+        ax.legend(fontsize=6, frameon=True, framealpha=1.0, edgecolor='none')
         for side in ('top', 'right'):
             ax.spines[side].set_visible(False)
     plt.tight_layout()
