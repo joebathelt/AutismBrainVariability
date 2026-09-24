@@ -687,6 +687,92 @@ def family_bootstrap(df, metric, fam_idx, n_boot, rng, report):
     return rows, observed
 
 
+def _sd_ratio_by_sex(y, pgs, male, n_bins=N_BINS):
+    """Ratio of the metric SD in the top vs bottom within-sex PGS quantile
+    bin (quintiles by default, as in the PGS-balanced analysis)."""
+    out = {}
+    for label, code in zip(SEX_LEVELS, (0.0, 1.0)):
+        m = male == code
+        bins = _quantile_bins(pgs[m], n_bins)
+        ys = y[m]
+        top = ys[bins == n_bins - 1]
+        bot = ys[bins == 0]
+        sd_top = top.std(ddof=1) if len(top) > 1 else np.nan
+        sd_bot = bot.std(ddof=1) if len(bot) > 1 else np.nan
+        out[label] = {'ratio': sd_top / sd_bot, 'sd_top': sd_top,
+                      'sd_bottom': sd_bot, 'n_top': len(top), 'n_bottom': len(bot)}
+    return out
+
+
+def quintile_sd_ratio(df, metric, fam_idx, n_boot, rng, report):
+    """Top-vs-bottom within-sex PGS-quintile SD ratio with bootstrap CIs.
+
+    Two bootstrap schemes: participants resampled within sex (the sampling
+    model of the primary analysis) and whole families resampled (family
+    cluster bootstrap). Percentile 95% intervals; the p-value is the
+    CI-inversion p for ratio != 1.
+    """
+    y = df[metric].values.astype(float)
+    pgs = df['pgs_z'].values.astype(float)
+    male = df['male'].values.astype(float)
+    n = len(y)
+    n_fam = len(fam_idx)
+    observed = _sd_ratio_by_sex(y, pgs, male)
+    sex_idx = {code: np.flatnonzero(male == code) for code in (0.0, 1.0)}
+
+    t0 = time.time()
+    boots = {'participant_bootstrap': {lab: [] for lab in SEX_LEVELS},
+             'family_bootstrap': {lab: [] for lab in SEX_LEVELS}}
+    for _ in range(n_boot):
+        idx = np.concatenate([sex_idx[c][rng.integers(0, len(sex_idx[c]),
+                                                       len(sex_idx[c]))]
+                              for c in (0.0, 1.0)])
+        r = _sd_ratio_by_sex(y[idx], pgs[idx], male[idx])
+        for lab in SEX_LEVELS:
+            boots['participant_bootstrap'][lab].append(r[lab]['ratio'])
+        draw = rng.integers(0, n_fam, n_fam)
+        idx = np.concatenate([fam_idx[g] for g in draw])
+        r = _sd_ratio_by_sex(y[idx], pgs[idx], male[idx])
+        for lab in SEX_LEVELS:
+            boots['family_bootstrap'][lab].append(r[lab]['ratio'])
+    elapsed = time.time() - t0
+
+    rows, wide = [], []
+    report.append(f"  {metric}: top vs bottom within-sex PGS-quintile SD ratio "
+                  f"({n_boot} bootstrap replicates per scheme, {elapsed:.1f} s)")
+    for lab in SEX_LEVELS:
+        obs = observed[lab]
+        line = (f"    {lab}: SD top = {obs['sd_top']:.5f} (n = {obs['n_top']}), "
+                f"SD bottom = {obs['sd_bottom']:.5f} (n = {obs['n_bottom']}), "
+                f"ratio = {obs['ratio']:.3f}")
+        rec = {'metric': metric, 'sex': lab, 'ratio': obs['ratio'],
+               'sd_top': obs['sd_top'], 'sd_bottom': obs['sd_bottom'],
+               'n_top': obs['n_top'], 'n_bottom': obs['n_bottom']}
+        for method in ('participant_bootstrap', 'family_bootstrap'):
+            b = np.asarray(boots[method][lab])
+            b = b[np.isfinite(b)]
+            lo, hi = np.percentile(b, [2.5, 97.5])
+            pval = 2.0 * min(np.mean(b >= 1.0), np.mean(b <= 1.0))
+            rows.append({
+                'metric': metric, 'test': 'quintile_sd_ratio', 'method': method,
+                'term': lab, 'estimate': obs['ratio'], 'se': float(b.std(ddof=1)),
+                'ci_low': float(lo), 'ci_high': float(hi), 'pvalue': float(pval),
+                'statistic': np.nan, 'df': np.nan, 'n': int(n),
+                'n_families': int(n_fam), 'B': int(len(b)),
+                'note': 'SD(top quintile) / SD(bottom quintile) of the '
+                        'covariate-residualised metric, within-sex PGS '
+                        'quintiles; percentile CI; CI-inversion p for ratio != 1',
+            })
+            tag = 'participant' if method == 'participant_bootstrap' else 'family'
+            rec[f'ci_low_{tag}'] = float(lo)
+            rec[f'ci_high_{tag}'] = float(hi)
+            rec[f'p_{tag}'] = float(pval)
+            line += f"; {tag} bootstrap 95% CI [{lo:.3f}, {hi:.3f}] (p = {pval:.3f})"
+        report.append(line)
+        wide.append(rec)
+    return rows, wide
+
+
 # %%
 # =============================================================================
 # 6. FAMILY-BLOCK PERMUTATION
@@ -1092,7 +1178,8 @@ def main():
     rows += fit_mixed_models(df, report)
 
     ss = np.random.SeedSequence(args.seed)
-    rng_boot, rng_perm = [np.random.default_rng(s) for s in ss.spawn(2)]
+    rng_boot, rng_perm, rng_ratio = [np.random.default_rng(s)
+                                     for s in ss.spawn(3)]
 
     report.append("")
     report.append("=" * 60)
@@ -1102,6 +1189,19 @@ def main():
         r, _ = family_bootstrap(df, metric, fam_idx, args.n_bootstrap,
                                 rng_boot, report)
         rows += r
+
+    report.append("")
+    report.append("=" * 60)
+    report.append("TOP vs BOTTOM PGS-QUINTILE SD RATIO BY SEX")
+    report.append("=" * 60)
+    report.append("  Within-sex PGS quintiles of the covariate-residualised "
+                  "metric; ratio = SD(top) / SD(bottom)")
+    ratio_wide = []
+    for metric in METRICS:
+        r, w = quintile_sd_ratio(df, metric, fam_idx, args.n_bootstrap,
+                                 rng_ratio, report)
+        rows += r
+        ratio_wide += w
 
     report.append("")
     report.append("=" * 60)
@@ -1153,12 +1253,16 @@ def main():
     report_file = reports_dir / 'C3b_family_structure_sensitivity_report.txt'
     summary.to_csv(summary_file, index=False, float_format='%.10g')
     icc_df.to_csv(icc_file, index=False, float_format='%.10g')
+    ratio_file = results_dir / 'C3b_quintile_sd_ratio.csv'
+    pd.DataFrame(ratio_wide).to_csv(ratio_file, index=False,
+                                    float_format='%.10g')
     plot_forest(summary, figure_file)
 
     report.append("")
     report.append(f"Runtime: {time.time() - t_start:.1f} s")
     report.append(f"Summary saved to: {summary_file}")
     report.append(f"ICC table saved to: {icc_file}")
+    report.append(f"Quintile SD ratios saved to: {ratio_file}")
     report.append(f"Figure saved to: {figure_file}")
     report.append("=" * 80)
     report.append("END OF REPORT")

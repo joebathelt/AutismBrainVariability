@@ -62,6 +62,7 @@ rule all:
         f"{PROJECT_DIR}/reports/C3b_family_structure_sensitivity_report.txt",
         f"{RESULTS_DIR}/C3b_family_sensitivity_summary.csv",
         f"{RESULTS_DIR}/C3b_family_icc.csv",
+        f"{RESULTS_DIR}/C3b_quintile_sd_ratio.csv",
         f"{PROJECT_DIR}/figures/C3b_family_sensitivity_forest.png",
         f"{PROJECT_DIR}/reports/C4_visualize_networks_report.txt",
         f"{RESULTS_DIR}/C4_exemplar_subjects.csv",
@@ -544,6 +545,7 @@ rule family_structure_sensitivity_c3b:
         report=f"{PROJECT_DIR}/reports/C3b_family_structure_sensitivity_report.txt",
         summary=f"{RESULTS_DIR}/C3b_family_sensitivity_summary.csv",
         icc=f"{RESULTS_DIR}/C3b_family_icc.csv",
+        sd_ratio=f"{RESULTS_DIR}/C3b_quintile_sd_ratio.csv",
         figure=f"{PROJECT_DIR}/figures/C3b_family_sensitivity_forest.png"
     params:
         n_bootstrap=config.get("c3b_n_bootstrap", 5000),
