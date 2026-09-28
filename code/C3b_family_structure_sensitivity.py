@@ -524,6 +524,8 @@ def sample_statistics(y, pgs, male, n_deciles=N_DECILES, n_bins=N_BINS):
     Returns
     -------
     dict with
+      mean_pgs_beta/_t, mean_interaction_beta/_t :
+          mean model metric ~ pgs_z + male + pgs_z:male
       vr_pgs_beta, vr_pgs_t, vr_interaction_beta, vr_interaction_t :
           auxiliary (resid^2) regression coefficients and classical t
       assoc_metric_beta/_t, assoc_interaction_beta/_t :
@@ -536,9 +538,12 @@ def sample_statistics(y, pgs, male, n_deciles=N_DECILES, n_bins=N_BINS):
     male = np.asarray(male, dtype=float)
     n = len(y)
     X = np.column_stack([np.ones(n), pgs, male, pgs * male])
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    e2 = (y - X @ beta) ** 2
     XtX_inv = np.linalg.inv(X.T @ X)
+    beta = XtX_inv @ X.T @ y
+    resid_mean = y - X @ beta
+    e2 = resid_mean ** 2
+    s2_mean = resid_mean @ resid_mean / (n - X.shape[1])
+    se_mean = np.sqrt(s2_mean * np.diag(XtX_inv))
     b2 = XtX_inv @ X.T @ e2
     resid2 = e2 - X @ b2
     sigma2 = resid2 @ resid2 / (n - X.shape[1])
@@ -552,7 +557,11 @@ def sample_statistics(y, pgs, male, n_deciles=N_DECILES, n_bins=N_BINS):
     s2a = ra @ ra / (n - Xa.shape[1])
     sea = np.sqrt(s2a * np.diag(XtXa_inv))
 
-    out = {'vr_pgs_beta': float(b2[1]),
+    out = {'mean_pgs_beta': float(beta[1]),
+           'mean_pgs_t': float(beta[1] / se_mean[1]),
+           'mean_interaction_beta': float(beta[3]),
+           'mean_interaction_t': float(beta[3] / se_mean[3]),
+           'vr_pgs_beta': float(b2[1]),
            'vr_pgs_t': float(b2[1] / se2[1]),
            'vr_interaction_beta': float(b2[3]),
            'vr_interaction_t': float(b2[3] / se2[3]),
@@ -588,6 +597,9 @@ STAT_META = {
 # coefficients and the trend statistics themselves for the binned tests.
 # key of the reported estimate: (test, term, sidedness, key of the statistic)
 PERM_META = {
+    'mean_pgs_beta': ('mean_model', 'pgs_z', 'two', 'mean_pgs_t'),
+    'mean_interaction_beta': ('mean_model', 'pgs_z:Gender', 'two',
+                              'mean_interaction_t'),
     'vr_interaction_beta': ('variance_regression', 'pgs_z:Gender', 'two',
                             'vr_interaction_t'),
     'vr_pgs_beta': ('variance_regression', 'pgs_z', 'two', 'vr_pgs_t'),
@@ -1286,6 +1298,13 @@ def main():
                   and not r.method.startswith('perm') else "")
             report.append(f"  {r.method:<20} beta = {r.estimate:.4e}  {ci}  "
                           f"p = {r.pvalue:.4f} [{'SIG' if r.pvalue < 0.05 else 'NS'}]")
+        for term in ('pgs_z', 'pgs_z:Gender'):
+            sub = summary[(summary.metric == metric) & (summary.test == 'mean_model')
+                          & (summary.term == term)]
+            for _, r in sub.iterrows():
+                report.append(f"  {'Mean model ' + term:<36} {r.method:<20} beta = "
+                              f"{r.estimate:.4e}, p = {r.pvalue:.4f} "
+                              f"[{'SIG' if r.pvalue < 0.05 else 'NS'}]")
         for test, label in (('decile_trend', 'Decile-SD trend M - F'),
                             ('balanced_bin_trend', 'Quantile-bin variance trend M - F')):
             sub = summary[(summary.metric == metric) & (summary.test == test)
