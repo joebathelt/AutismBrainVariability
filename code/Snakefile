@@ -70,6 +70,9 @@ rule all:
         f"{PROJECT_DIR}/reports/C3c_ancestry_checks_report.txt",
         f"{RESULTS_DIR}/C3c_ancestry_variance_models.csv",
         f"{PROJECT_DIR}/figures/C3c_ancestry_checks.png",
+        f"{PROJECT_DIR}/reports/C3d_motion_check_report.txt",
+        f"{RESULTS_DIR}/C3d_motion_check.csv",
+        f"{PROJECT_DIR}/figures/C3d_motion_check.png",
         f"{PROJECT_DIR}/reports/C4_visualize_networks_report.txt",
         f"{RESULTS_DIR}/C4_exemplar_subjects.csv",
         f"{PROJECT_DIR}/figures/C4_Bootstrap_Ellipse_Extent_Plot.png",
@@ -660,6 +663,37 @@ rule ancestry_checks_c3c:
         """
 
 
+rule motion_check_c3d:
+    """Head-motion variance against the PGS (C3d): the C3 variance tests
+    applied to mean relative RMS motion (and its log), and the metric
+    variance regression with motion terms / without the highest-motion
+    decile."""
+    input:
+        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv"
+    output:
+        report=f"{PROJECT_DIR}/reports/C3d_motion_check_report.txt",
+        table=f"{RESULTS_DIR}/C3d_motion_check.csv",
+        figure=f"{PROJECT_DIR}/figures/C3d_motion_check.png"
+    params:
+        n_perm=config.get("c3d_n_perm", 10000),
+        seed=config.get("c3d_seed", 42)
+    conda:
+        "environment.yml"
+    threads: 1
+    resources:
+        mem_mb=config.get("c3b_mem_mb", 4000)
+    log:
+        f"{LOGS_DIR}/C3d_motion_check.log"
+    shell:
+        """
+        python {CODE_DIR}/C3d_motion_check.py \
+            --project {PROJECT_DIR} \
+            --results {input.results} \
+            --n-perm {params.n_perm} \
+            --seed {params.seed} > {log} 2>&1
+        """
+
+
 rule visualize_networks:
     """Network visualisations by PGS group (C4).
 
@@ -851,6 +885,8 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/C3b_family_sensitivity_forest.png
         rm -f {PROJECT_DIR}/reports/C3c_ancestry_checks_report.txt
         rm -f {PROJECT_DIR}/figures/C3c_ancestry_checks.png
+        rm -f {PROJECT_DIR}/reports/C3d_motion_check_report.txt
+        rm -f {PROJECT_DIR}/figures/C3d_motion_check.png
         rm -f {DATA_DIR}/C4_avg_connectivity_*.npy
 
         # Quality control outputs

@@ -51,3 +51,7 @@ c1b_mixedlm: true         # fit family random-intercept LMMs for significant edg
 c3c_n_bootstrap: 5000
 c3c_n_perm: 10000
 c3c_seed: 42
+
+# Head-motion variance check (C3d)
+c3d_n_perm: 10000
+c3d_seed: 42

@@ -111,6 +111,7 @@ snakemake --cores 1 --use-conda preprocess_phenotypic
 5. `continuous_heteroscedasticity_analysis` - Continuous BP / White / quantile tests + sex × PGS variance tests (C3)
    - `family_structure_sensitivity_c3b` - C3 inference with family clustering / random effects / family bootstrap + permutation (C3b)
    - `ancestry_checks_c3c` - PGS distribution / extremes / metric variance by ancestry, PCs in the variance model, European-cluster sensitivity (C3c)
+   - `motion_check_c3d` - head-motion variance vs PGS and motion-adjusted variance models (C3d)
 6. `visualize_networks` - Bootstrap connectivity/network panels, exemplar networks, density + ellipse plots (C4)
 
 ### Quality Control
