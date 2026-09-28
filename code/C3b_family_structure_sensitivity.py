@@ -917,29 +917,29 @@ def family_block_permutation(df, metric, fam_idx, n_perm, rng, report):
 
 
 def sexcheck_sensitivity(df, sexcheck_csv, report):
-    """Refit the primary C3 models without the individuals flagged by the
-    B1b chrX sex check (discordant or ambiguous F)."""
+    """Refit the primary C3 models without the individuals whose chrX
+    sex check (B1b) is discordant with their phenotypic sex."""
     report.append("")
     report.append("=" * 60)
-    report.append("SENSITIVITY: EXCLUDING chrX SEX-CHECK FLAGGED INDIVIDUALS")
+    report.append("SENSITIVITY: EXCLUDING chrX SEX-DISCORDANT INDIVIDUALS")
     report.append("=" * 60)
     sc = pd.read_csv(sexcheck_csv, dtype={'IID': str})
-    flagged = set(sc.loc[sc['flagged'].astype(bool), 'IID'])
-    keep = ~df['Subject'].isin(flagged)
+    discordant = set(sc.loc[sc['discordant'].astype(bool), 'IID'])
+    keep = ~df['Subject'].isin(discordant)
     n_drop = int((~keep).sum())
-    report.append(f"  Flagged in B1b: {len(flagged)}; present in the analytic "
-                  f"sample: {n_drop}; refitting on n = {int(keep.sum())}")
+    report.append(f"  Discordant in B1b: {len(discordant)}; present in the "
+                  f"analytic sample: {n_drop}; refitting on n = {int(keep.sum())}")
     sub = df[keep].reset_index(drop=True)
     n_fam = sub['family'].nunique()
     rows = []
     scratch = []
     vr = test_variance_regression_by_sex(sub, scratch)
     assoc = test_pgs_graph_metric_association(sub, scratch)
-    note = f"primary OLS refitted without {n_drop} chrX sex-check flagged participants"
+    note = f"primary OLS refitted without {n_drop} chrX sex-discordant participant(s)"
     for metric in METRICS:
         for term in _MAIN_COEF_NAMES:
             rows.append({'metric': metric, 'test': 'variance_regression',
-                         'method': 'exclude_sexcheck_flagged', 'term': term,
+                         'method': 'exclude_sex_discordant', 'term': term,
                          'estimate': vr[metric]['coefs'][term], 'se': np.nan,
                          'ci_low': np.nan, 'ci_high': np.nan,
                          'pvalue': vr[metric]['pvalues'][term],
@@ -947,7 +947,7 @@ def sexcheck_sensitivity(df, sexcheck_csv, report):
                          'n_families': int(n_fam), 'B': np.nan, 'note': note})
         for term in _ASSOC_COEF_NAMES:
             rows.append({'metric': metric, 'test': 'association',
-                         'method': 'exclude_sexcheck_flagged', 'term': term,
+                         'method': 'exclude_sex_discordant', 'term': term,
                          'estimate': assoc[metric]['coefs'][term], 'se': np.nan,
                          'ci_low': np.nan, 'ci_high': np.nan,
                          'pvalue': assoc[metric]['pvalues'][term],
