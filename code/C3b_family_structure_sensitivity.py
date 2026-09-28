@@ -477,6 +477,67 @@ def fit_mixed_models(df, report):
     return rows
 
 
+def fit_behaviour_models(df, report):
+    """Behavioural (social difficulty) models with OLS, HC1, family
+    cluster-robust and family random-intercept inference.
+
+        Social_Score ~ pgs_z  + male + pgs_z:male        (PGS -> behaviour)
+        Social_Score ~ metric + male + metric:male       (brain -> behaviour)
+
+    Coefficients are also given standardised (SD of Social_Score per SD of
+    the predictor) in the note column.
+    """
+    report.append("")
+    report.append("=" * 60)
+    report.append("BEHAVIOUR MODELS: Social_Score ~ predictor x sex")
+    report.append("=" * 60)
+    fam = df['family'].values
+    n_families = int(fam.max() + 1)
+    y = df['Social_Score'].values.astype(float)
+    sd_y = y.std(ddof=1)
+    male = df['male'].values
+    fits = {
+        'primary_ols': dict(),
+        'hc1': dict(cov_type='HC1'),
+        'cluster_robust': dict(cov_type='cluster', cov_kwds={'groups': fam},
+                               use_t=True),
+    }
+    rows = []
+    predictors = [('pgs_z', 'behaviour_pgs')] + [(m, 'behaviour_metric') for m in METRICS]
+    for pred, test in predictors:
+        x = df[pred].values.astype(float)
+        sd_x = x.std(ddof=1)
+        X = sm.add_constant(np.column_stack([x, male, x * male]))
+        names = ('const', pred, 'Gender', f'{pred}:Gender')
+        for method, kw in fits.items():
+            res = sm.OLS(y, X).fit(**kw)
+            for r in _ols_rows(res, names, pred, test, method, n_families):
+                r['note'] = (f"standardised beta = {r['estimate'] * sd_x / sd_y:.4f} "
+                             f"SD(Social) per SD({pred})"
+                             if r['term'] in (pred, f'{pred}:Gender') else '')
+                rows.append(r)
+            report.append(f"  Social ~ {pred:<18} {method:<15} {pred} beta = "
+                          f"{res.params[1]:.4e} (std {res.params[1] * sd_x / sd_y:6.3f}), "
+                          f"p = {res.pvalues[1]:.4f}; {pred}:Gender beta = "
+                          f"{res.params[3]:.4e} (std {res.params[3] * sd_x / sd_y:6.3f}), "
+                          f"p = {res.pvalues[3]:.4f}")
+        data = pd.DataFrame({'y': y / sd_y, 'x': x / sd_x, 'male': male, 'family': fam})
+        fit = _fit_mixedlm('y ~ x + male + x:male', data, data['family'])
+        note = (f"converged={fit['converged']}; boundary={fit['boundary']}; "
+                f"ICC_family={fit['icc']:.4f}")
+        rows += _mixed_rows(fit, ['Intercept', 'x', 'male', 'x:male'],
+                            [sd_y, sd_y / sd_x, sd_y, sd_y / sd_x],
+                            pred, test, n_families, note)
+        for r in rows[-4:]:
+            r['term'] = dict(zip(['Intercept', 'x', 'male', 'x:male'], names))[r['term']]
+        resm = fit['result']
+        report.append(f"  Social ~ {pred:<18} {'mixedlm':<15} {pred} std beta = "
+                      f"{resm.fe_params['x']:6.3f}, p = {resm.pvalues['x']:.4f}; "
+                      f"{pred}:Gender std beta = {resm.fe_params['x:male']:6.3f}, "
+                      f"p = {resm.pvalues['x:male']:.4f}; {note}")
+    return rows
+
+
 # %%
 # =============================================================================
 # 4. RESAMPLING STATISTICS (shared by observed, bootstrap and permutation)
@@ -1237,6 +1298,7 @@ def main():
     rows = []
     rows += fit_cluster_robust(df, report)
     rows += fit_mixed_models(df, report)
+    rows += fit_behaviour_models(df, report)
 
     ss = np.random.SeedSequence(args.seed)
     rng_boot, rng_perm, rng_ratio = [np.random.default_rng(s)
