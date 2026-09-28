@@ -231,9 +231,20 @@ echo "Step 9 (final unrelated): ${N} participants" >> ${RESULTS_FOLDER}/sample_c
 echo "============================================="
 echo "Step 10: Base data QC (iPSYCH GWAS cleaning)..."
 
+# Columns of the released file: CHR SNP BP A1 A2 INFO OR SE P.
+# INFO is the imputation information score shipped with the summary
+# statistics (IMPUTE2-type metric, on the R^2 scale); the released file is
+# already restricted to INFO >= 0.7 (minimum 0.700), and PRSice applies its
+# default --base-info INFO:0.9 downstream, which is the filter that takes
+# effect. There is no allele-frequency column, so no base MAF filter can be
+# applied here (target MAF >= 0.01 is enforced in B1).
+# History: an earlier version of these lines tested $7 (OR) against 0.7 and
+# $8 (SE) against 0.01 instead of INFO and MAF; the only variants that
+# removed (three with OR < 0.7) all had INFO < 0.9 or ambiguous alleles and
+# were excluded by PRSice regardless, so outputs are unaffected by the fix.
 gunzip -c ${PLINK_FOLDER}/iPSYCH_PGC_ASD_Nov_2017.gz | awk '!seen[$2]++' | gzip > ${PLINK_FOLDER}/iPSYCH_cleaned.gz
-gunzip -c ${PLINK_FOLDER}/iPSYCH_cleaned.gz | awk '$5 != "NA" && $6 != "NA" && $7 >= 0.7' | gzip > ${PLINK_FOLDER}/iPSYCH_filtered.gz
-gunzip -c ${PLINK_FOLDER}/iPSYCH_filtered.gz | awk '$8 >= 0.01' | gzip > ${PLINK_FOLDER}/iPSYCH_qc_final.gz
+gunzip -c ${PLINK_FOLDER}/iPSYCH_cleaned.gz | awk 'NR == 1 || ($4 != "NA" && $5 != "NA" && $6 >= 0.7)' | gzip > ${PLINK_FOLDER}/iPSYCH_filtered.gz
+cp ${PLINK_FOLDER}/iPSYCH_filtered.gz ${PLINK_FOLDER}/iPSYCH_qc_final.gz
 
 # Step 11: Calculate PGS at multiple thresholds for unrelated sample
 echo "============================================="
