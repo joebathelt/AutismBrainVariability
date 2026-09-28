@@ -46,3 +46,8 @@ c3b_n_bootstrap: 5000     # family cluster-bootstrap replicates
 c3b_n_perm: 10000         # family-block permutations
 c3b_seed: 42
 c1b_mixedlm: true         # fit family random-intercept LMMs for significant edges
+
+# Ancestry checks (C3c)
+c3c_n_bootstrap: 5000
+c3c_n_perm: 10000
+c3c_seed: 42

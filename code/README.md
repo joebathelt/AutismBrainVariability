@@ -49,6 +49,7 @@ code/
   C2b_evaluate_communities.py               # Parcellation resolution tuning
   C3_continuous_heteroscedasticity_analysis.py   # Continuous BP / White / quantile + sex × PGS variance tests
   C3b_family_structure_sensitivity.py       # C3 inference with family clustering / random effects
+  C3c_ancestry_checks.py                    # PGS / variance checks by ancestry (self-report + PCs)
 
   utils/                              # Shared helpers (ID tracking, connectome viz, …)
 
