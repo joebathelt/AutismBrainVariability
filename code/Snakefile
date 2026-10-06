@@ -73,6 +73,10 @@ rule all:
         f"{PROJECT_DIR}/reports/C3d_motion_check_report.txt",
         f"{RESULTS_DIR}/C3d_motion_check.csv",
         f"{PROJECT_DIR}/figures/C3d_motion_check.png",
+        f"{PROJECT_DIR}/reports/C3e_pre_specified_tests_report.txt",
+        f"{RESULTS_DIR}/C3e_pre_specified_tests.csv",
+        f"{RESULTS_DIR}/C3e_quantile_slopes.csv",
+        f"{PROJECT_DIR}/figures/C3e_pre_specified_tests.png",
         f"{PROJECT_DIR}/reports/C4_visualize_networks_report.txt",
         f"{RESULTS_DIR}/C4_exemplar_subjects.csv",
         f"{PROJECT_DIR}/figures/C4_Bootstrap_Ellipse_Extent_Plot.png",
@@ -694,6 +698,63 @@ rule motion_check_c3d:
         """
 
 
+rule pre_specified_tests_c3e:
+    """Pre-specified heteroscedasticity tests and density sensitivity (C3e).
+
+    Breusch-Pagan and White tests (pooled, with the sex x PGS interaction,
+    and within each sex), quantile-regression slope divergence by sex, and
+    the C3 variance tests repeated at 15%, 20% and 25% density, with
+    within-sex permutation and family cluster-robust inference. Metrics are
+    recomputed with C3's functions; the 20% metrics are checked against the
+    C3 per-subject table."""
+    input:
+        pgs=f"{RESULTS_DIR}/pgs_residuals.csv",
+        social=f"{RESULTS_DIR}/cfa_factor_scores_full_sample.csv",
+        behavioural=lambda wildcards: f"{DATA_DIR}/{config['input_behavioural']}",
+        phenotypic=lambda wildcards: f"{DATA_DIR}/{config['input_phenotypic']}",
+        movement=lambda wildcards: f"{DATA_DIR}/{config['input_movement']}",
+        ids=lambda wildcards: f"{DATA_DIR}/{config['input_subject_ids']}",
+        partition=f"{RESULTS_DIR}/C2b_selected_partition.csv",
+        results=f"{RESULTS_DIR}/C3_heteroscedasticity_results.csv"
+    output:
+        report=f"{PROJECT_DIR}/reports/C3e_pre_specified_tests_report.txt",
+        table=f"{RESULTS_DIR}/C3e_pre_specified_tests.csv",
+        slopes=f"{RESULTS_DIR}/C3e_quantile_slopes.csv",
+        figure=f"{PROJECT_DIR}/figures/C3e_pre_specified_tests.png"
+    params:
+        matrices_dir=lambda wildcards: f"{DATA_DIR}/{config.get('matrices_dir', 'HCP_PTN1200/netmats')}",
+        motion_threshold=config.get("motion_threshold", 0.2),
+        n_perm=config.get("c3e_n_perm", 10000),
+        n_perm_qr=config.get("c3e_n_perm_qr", 10000),
+        n_bootstrap=config.get("c3e_n_bootstrap", 5000),
+        seed=config.get("c3e_seed", 42)
+    conda:
+        "environment.yml"
+    threads: 1
+    resources:
+        mem_mb=config.get("mem_mb", 16000)
+    log:
+        f"{LOGS_DIR}/C3e_pre_specified_tests.log"
+    shell:
+        """
+        python {CODE_DIR}/C3e_pre_specified_tests.py \
+            --project {PROJECT_DIR} \
+            --pgs {input.pgs} \
+            --social {input.social} \
+            --behavioural {input.behavioural} \
+            --phenotypic {input.phenotypic} \
+            --movement {input.movement} \
+            --ids {input.ids} \
+            --matrices-dir {params.matrices_dir} \
+            --partition {input.partition} \
+            --results {input.results} \
+            --motion-threshold {params.motion_threshold} \
+            --n-perm {params.n_perm} \
+            --n-perm-qr {params.n_perm_qr} \
+            --n-bootstrap {params.n_bootstrap} \
+            --seed {params.seed} > {log} 2>&1
+        """
+
 rule visualize_networks:
     """Network visualisations by PGS group (C4).
 
@@ -887,6 +948,8 @@ rule clean:
         rm -f {PROJECT_DIR}/figures/C3c_ancestry_checks.png
         rm -f {PROJECT_DIR}/reports/C3d_motion_check_report.txt
         rm -f {PROJECT_DIR}/figures/C3d_motion_check.png
+        rm -f {PROJECT_DIR}/reports/C3e_pre_specified_tests_report.txt
+        rm -f {PROJECT_DIR}/figures/C3e_pre_specified_tests.png
         rm -f {DATA_DIR}/C4_avg_connectivity_*.npy
 
         # Quality control outputs

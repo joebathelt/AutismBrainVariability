@@ -51,6 +51,7 @@ code/
   C3b_family_structure_sensitivity.py       # C3 inference with family clustering / random effects
   C3c_ancestry_checks.py                    # PGS / variance checks by ancestry (self-report + PCs)
   C3d_motion_check.py                       # Head-motion variance vs PGS; metric variance model with motion terms
+  C3e_pre_specified_tests.py                # BP / White / quantile-regression tests by sex; density sensitivity
 
   utils/                              # Shared helpers (ID tracking, connectome viz, …)
 

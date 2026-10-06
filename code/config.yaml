@@ -55,3 +55,9 @@ c3c_seed: 42
 # Head-motion variance check (C3d)
 c3d_n_perm: 10000
 c3d_seed: 42
+
+# Pre-specified heteroscedasticity tests and density sensitivity (C3e)
+c3e_n_perm: 10000         # within-sex permutations (BP / White / variance regression / trends)
+c3e_n_perm_qr: 10000      # within-sex permutations for the quantile-regression divergence
+c3e_n_bootstrap: 5000     # quintile SD-ratio bootstrap
+c3e_seed: 42
